@@ -20,11 +20,11 @@ curl -fsSL https://raw.githubusercontent.com/daggerhashimoto/openclaw-nerve/mast
 
 You can already chat with your OpenClaw agent through webchat, Telegram, WhatsApp, Discord. Nerve is what you open when chatting isn't enough.
 
-Nerve is a self-hosted cockpit for [OpenClaw](https://github.com/openclaw/openclaw) agents. Voice conversations, live workspace editing, inline charts, cron scheduling, and full token-level visibility. One install script. Running in 30 seconds.
+Nerve is a self-hosted web UI for [OpenClaw](https://github.com/openclaw/openclaw) AI agents. Voice conversations, live workspace editing, inline charts, cron scheduling, and full token-level visibility. One install script. Running in 30 seconds. Open source, MIT licensed.
 
 ## Why Nerve?
 
-Messaging channels are great for chatting. But you can't watch charts render in real-time, edit your agent's workspace mid-conversation, browse its files, or monitor token spend from a Telegram window. Nerve gives you the full picture.
+Messaging channels are great for chatting. But you can't watch charts render in real-time, edit your agent's workspace mid-conversation, browse its files, or monitor token spend from a Telegram window. Nerve is the dashboard that gives you the full picture.
 
 <div align="center">
 
