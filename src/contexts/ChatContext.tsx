@@ -174,7 +174,15 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     }
 
     previousConnectionStateRef.current = connectionState;
-  }, [connectionState, currentSession, msgHook.loadHistory, recoveryHook]);
+  }, [
+    connectionState,
+    currentSession,
+    msgHook.loadHistory,
+    recoveryHook.wasGeneratingOnDisconnect,
+    recoveryHook.triggerRecovery,
+    recoveryHook.clearDisconnectState,
+    recoveryHook.captureDisconnectState,
+  ]);
 
   // ─── Periodic history poll for sub-agent sessions ─────────────────────────
   const isSubagentSession = currentSession?.includes(':subagent:') ?? false;
@@ -226,7 +234,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     }, 12_000);
 
     return () => clearTimeout(timer);
-  }, [isGenerating, streamHook.lastEventTimestamp, recoveryHook]);
+  }, [
+    isGenerating,
+    streamHook.lastEventTimestamp,
+    recoveryHook.isRecoveryInFlight,
+    recoveryHook.isRecoveryPending,
+    recoveryHook.triggerRecovery,
+  ]);
 
   // ─── Subscribe to streaming events ────────────────────────────────────────
   useEffect(() => {
@@ -507,10 +521,25 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       }
     });
   }, [
-    msgHook,
-    streamHook,
-    recoveryHook,
-    ttsHook,
+    msgHook.getAllMessages,
+    msgHook.applyMessageWindow,
+    streamHook.setProcessingStage,
+    streamHook.setLastEventTimestamp,
+    streamHook.setActivityLog,
+    streamHook.addActivityEntry,
+    streamHook.completeActivityEntry,
+    streamHook.startThinking,
+    streamHook.captureThinkingDuration,
+    streamHook.scheduleStreamingUpdate,
+    streamHook.clearStreamBuffer,
+    streamHook.getThinkingDuration,
+    streamHook.resetThinking,
+    recoveryHook.triggerRecovery,
+    recoveryHook.incrementGeneration,
+    recoveryHook.getGeneration,
+    ttsHook.playCompletionPing,
+    ttsHook.resetPlayedSounds,
+    ttsHook.handleFinalTTS,
     subscribe,
     rpc,
   ]);
