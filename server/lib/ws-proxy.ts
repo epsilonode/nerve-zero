@@ -183,6 +183,27 @@ function createGatewayRelay(
   let pending: { data: Buffer | string; isBinary: boolean }[] = [];
   let pendingBytes = 0;
 
+  /** Queue a client message for deferred forwarding. Returns false if limits exceeded. */
+  function enqueuePending(data: Buffer | string, isBinary: boolean): boolean {
+    const size = typeof data === 'string' ? Buffer.byteLength(data) : data.length;
+    if (pending.length >= MAX_PENDING || pendingBytes + size > MAX_BYTES) {
+      return false;
+    }
+    pendingBytes += size;
+    pending.push({ data, isBinary });
+    return true;
+  }
+
+  /** Flush buffered messages to gateway in FIFO order. */
+  function flushPending(): void {
+    if (!gwWs || gwWs.readyState !== WebSocket.OPEN) return;
+    for (const msg of pending) {
+      gwWs.send(msg.isBinary ? msg.data : msg.data.toString());
+    }
+    pending = [];
+    pendingBytes = 0;
+  }
+
   /** Clear the challenge nonce timeout if active. */
   function clearChallengeTimer(): void {
     if (challengeTimer) {
@@ -205,6 +226,7 @@ function createGatewayRelay(
       : savedConnectMsg;
     gwWs.send(JSON.stringify(modified));
     handshakeComplete = true;
+    flushPending();
   }
 
   /** Start a deadline timer — sends connect without identity on expiry. */
@@ -248,14 +270,8 @@ function createGatewayRelay(
     });
 
     gwWs.on('open', () => {
-      // Flush buffered messages (connect message is held separately)
-      for (const msg of pending) {
-        gwWs.send(msg.isBinary ? msg.data : msg.data.toString());
-      }
-      pending = [];
-      pendingBytes = 0;
-
-      // Handle deferred connect message
+      // Handle deferred connect message first. Non-connect pending messages are
+      // flushed only after connect is dispatched to preserve protocol ordering.
       if (savedConnectMsg && !connectSent) {
         if (hasRetried) {
           // Retry path — send immediately without device identity
@@ -267,6 +283,9 @@ function createGatewayRelay(
           // Wait for challenge nonce; timeout sends without identity (graceful degradation)
           startChallengeDeadline();
         }
+      } else {
+        // No deferred connect waiting — safe to flush pending traffic immediately.
+        flushPending();
       }
     });
 
@@ -315,13 +334,35 @@ function createGatewayRelay(
         } catch { /* pass through */ }
       }
 
-      const size = typeof data === 'string' ? Buffer.byteLength(data) : data.length;
-      if (pending.length >= MAX_PENDING || pendingBytes + size > MAX_BYTES) {
+      if (!enqueuePending(data, isBinary)) {
         clientWs.close(1008, 'Too many pending messages');
         return;
       }
-      pendingBytes += size;
-      pending.push({ data, isBinary });
+      return;
+    }
+
+    // Gateway is open, but if connect is still deferred, queue non-connect
+    // traffic until connect is dispatched.
+    if (!handshakeComplete && savedConnectMsg && !connectSent) {
+      if (!isBinary) {
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg.type === 'req' && msg.method === 'connect' && msg.params) {
+            // Last-write-wins if multiple connect frames arrive before dispatch.
+            savedConnectMsg = msg;
+            if (challengeNonce) {
+              dispatchConnect(challengeNonce);
+            } else {
+              startChallengeDeadline();
+            }
+            return;
+          }
+        } catch { /* pass through to pending queue */ }
+      }
+
+      if (!enqueuePending(data, isBinary)) {
+        clientWs.close(1008, 'Too many pending messages');
+      }
       return;
     }
 

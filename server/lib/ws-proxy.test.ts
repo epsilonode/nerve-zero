@@ -467,5 +467,86 @@ describe('ws-proxy', () => {
 
       ws.close();
     });
+
+    it('dispatches deferred connect before queued non-connect messages', async () => {
+      // Gateway that delays connect.challenge to force nonce-wait buffering
+      const delayedServer = createHttpServer();
+      const delayedWss = new WebSocketServer({ server: delayedServer });
+      const requestOrder: string[] = [];
+
+      delayedWss.on('connection', (delayedWs: WebSocket) => {
+        setTimeout(() => {
+          delayedWs.send(JSON.stringify({
+            type: 'event',
+            event: 'connect.challenge',
+            payload: { nonce: 'late-nonce' },
+          }));
+        }, 120);
+
+        delayedWs.on('message', (data: Buffer | string) => {
+          try {
+            const parsed = JSON.parse(data.toString());
+            if (parsed.type === 'req' && typeof parsed.method === 'string') {
+              requestOrder.push(parsed.method);
+              if (parsed.id) {
+                delayedWs.send(JSON.stringify({
+                  type: 'res',
+                  id: parsed.id,
+                  ok: true,
+                  payload: {},
+                }));
+              }
+            }
+          } catch { /* ignore */ }
+        });
+      });
+
+      await new Promise<void>((resolve) => {
+        delayedServer.listen(0, '127.0.0.1', () => resolve());
+      });
+      const addr = delayedServer.address();
+      const delayedPort = typeof addr === 'object' && addr ? addr.port : 0;
+
+      try {
+        const ws = new WebSocket(
+          `ws://127.0.0.1:${proxyPort}/ws?target=${encodeURIComponent(`ws://127.0.0.1:${delayedPort}`)}`,
+        );
+        await new Promise<void>((resolve) => ws.on('open', resolve));
+
+        // Connect should be deferred until challenge; ping must remain queued behind it.
+        ws.send(JSON.stringify({
+          type: 'req',
+          method: 'connect',
+          id: 'c5',
+          params: { auth: { token: 'test-token' }, client: { id: 'nerve-ui' } },
+        }));
+        ws.send(JSON.stringify({ type: 'req', method: 'ping', id: 'p5' }));
+
+        // Wait until ping response confirms both requests were forwarded.
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('timeout waiting for ping response')), 5000);
+          ws.on('message', (data) => {
+            try {
+              const msg = JSON.parse(data.toString());
+              if (msg.type === 'res' && msg.id === 'p5') {
+                clearTimeout(timer);
+                resolve();
+              }
+            } catch { /* ignore */ }
+          });
+        });
+
+        const connectIndex = requestOrder.indexOf('connect');
+        const pingIndex = requestOrder.indexOf('ping');
+        expect(connectIndex).toBeGreaterThanOrEqual(0);
+        expect(pingIndex).toBeGreaterThanOrEqual(0);
+        expect(connectIndex).toBeLessThan(pingIndex);
+
+        ws.close();
+      } finally {
+        delayedWss.close();
+        await new Promise<void>((resolve) => delayedServer.close(() => resolve()));
+      }
+    });
   });
 });
