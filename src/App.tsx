@@ -13,6 +13,7 @@ import { useSettings } from '@/contexts/SettingsContext';
 import { getSessionKey } from '@/types';
 import { useConnectionManager } from '@/hooks/useConnectionManager';
 import { useDashboardData } from '@/hooks/useDashboardData';
+import { useGatewayRestart } from '@/hooks/useGatewayRestart';
 import { ConnectDialog } from '@/features/connect/ConnectDialog';
 import { TopBar } from '@/components/TopBar';
 import { StatusBar } from '@/components/StatusBar';
@@ -126,6 +127,17 @@ export default function App({ onLogout }: AppProps) {
   const [logGlow, setLogGlow] = useState(false);
   const prevLogCount = useRef(0);
   const chatPanelRef = useRef<ChatPanelHandle>(null);
+
+  // Gateway restart
+  const {
+    showGatewayRestartConfirm,
+    gatewayRestarting,
+    gatewayRestartNotice,
+    handleGatewayRestart,
+    cancelGatewayRestart,
+    confirmGatewayRestart,
+    dismissNotice,
+  } = useGatewayRestart();
 
   // Responsive layout state (chat-first on smaller viewports)
   const [isCompactLayout, setIsCompactLayout] = useState(() => {
@@ -422,7 +434,7 @@ export default function App({ onLogout }: AppProps) {
       />
       
       {/* Reconnecting banner — mission control style */}
-      {connectionState === 'reconnecting' && (
+      {connectionState === 'reconnecting' && !gatewayRestarting && (
         <div className="fixed top-12 left-1/2 -translate-x-1/2 z-50 bg-gradient-to-r from-red-900/90 to-orange-900/90 text-red-200 px-5 py-2 rounded-sm text-[11px] font-mono flex items-center gap-2 shadow-lg border border-red-700/60 uppercase tracking-wider">
           <span className="text-red-400">⚠</span>
           <span>SIGNAL LOST</span>
@@ -430,6 +442,31 @@ export default function App({ onLogout }: AppProps) {
           <span>RECONNECTING{reconnectAttempt > 1 ? ` (ATTEMPT ${reconnectAttempt})` : ''}</span>
           <span className="w-2 h-2 bg-red-400 rounded-full animate-pulse" />
         </div>
+      )}
+
+      {/* Gateway restarting banner */}
+      {gatewayRestarting && (
+        <div className="fixed top-12 left-1/2 -translate-x-1/2 z-50 bg-gradient-to-r from-amber-900/90 to-orange-900/90 text-amber-200 px-5 py-2 rounded-sm text-[11px] font-mono flex items-center gap-2 shadow-lg border border-amber-700/60 uppercase tracking-wider">
+          <span className="text-amber-400">⟳</span>
+          <span>GATEWAY RESTARTING</span>
+          <span className="w-2 h-2 bg-amber-400 rounded-full animate-pulse" />
+        </div>
+      )}
+
+      {/* Gateway restart result banner */}
+      {!gatewayRestarting && gatewayRestartNotice && (
+        <button
+          type="button"
+          onClick={dismissNotice}
+          className={`fixed top-12 left-1/2 -translate-x-1/2 z-50 px-5 py-2 rounded-sm text-[11px] font-mono flex items-center gap-2 shadow-lg uppercase tracking-wider cursor-pointer hover:opacity-90 transition-opacity ${
+            gatewayRestartNotice.ok
+              ? 'bg-gradient-to-r from-green-900/90 to-emerald-900/90 text-green-200 border border-green-700/60'
+              : 'bg-gradient-to-r from-red-900/90 to-orange-900/90 text-red-200 border border-red-700/60'
+          }`}
+        >
+          <span>{gatewayRestartNotice.ok ? '✓' : '⚠'}</span>
+          <span>{gatewayRestartNotice.message}</span>
+        </button>
       )}
       
       <TopBar
@@ -472,6 +509,8 @@ export default function App({ onLogout }: AppProps) {
             onToggleWakeWord={handleToggleWakeWord}
             agentName={agentName}
             onLogout={onLogout}
+            onGatewayRestart={handleGatewayRestart}
+            gatewayRestarting={gatewayRestarting}
           />
         </Suspense>
       </PanelErrorBoundary>
@@ -546,6 +585,18 @@ export default function App({ onLogout }: AppProps) {
         onConfirm={confirmReset}
         onCancel={cancelReset}
         variant="danger"
+      />
+
+      {/* Gateway Restart Confirmation */}
+      <ConfirmDialog
+        open={showGatewayRestartConfirm}
+        title="Restart OpenClaw Gateway"
+        message="This will briefly interrupt gateway connectivity. Continue?"
+        confirmLabel="Restart"
+        cancelLabel="Cancel"
+        onConfirm={confirmGatewayRestart}
+        onCancel={cancelGatewayRestart}
+        variant="warning"
       />
 
       {/* Spawn Agent Dialog (from command palette) */}

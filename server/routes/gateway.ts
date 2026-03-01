@@ -5,19 +5,23 @@
  *                                   Respects allowlist if configured; falls back to all available.
  * GET  /api/gateway/session-info — Returns the current session's runtime info (model, thinking level).
  * POST /api/gateway/session-patch — Change model/effort for a session via HTTP (reliable fallback).
+ * POST /api/gateway/restart      — Restart the OpenClaw gateway service via `openclaw gateway restart`.
  *
  * Response (models):       { models: Array<{ id: string; label: string; provider: string }> }
  * Response (session-info): { model?: string; thinking?: string }
  * Response (session-patch): { ok: boolean; model?: string; thinking?: string; error?: string }
+ * Response (restart):      { ok: boolean; output: string }
  */
 
 import { Hono } from 'hono';
 import { execFile } from 'node:child_process';
 import { homedir } from 'node:os';
+import { Socket } from 'node:net';
 import { z } from 'zod';
 import { invokeGatewayTool } from '../lib/gateway-client.js';
-import { rateLimitGeneral } from '../middleware/rate-limit.js';
+import { rateLimitGeneral, rateLimitRestart } from '../middleware/rate-limit.js';
 import { resolveOpenclawBin } from '../lib/openclaw-bin.js';
+import { config } from '../lib/config.js';
 
 const app = new Hono();
 
@@ -338,6 +342,119 @@ app.post('/api/gateway/session-patch', rateLimitGeneral, async (c) => {
   }
 
   return c.json(result);
+});
+
+// ── POST /api/gateway/restart ───────────────────────────────────────
+
+const GATEWAY_RESTART_TIMEOUT_MS = 15_000;
+
+app.post('/api/gateway/restart', rateLimitRestart, async (c) => {
+  // DBus session vars are required for `systemctl --user` commands.
+  // When Nerve runs as a system service these may be absent; provide fallbacks.
+  const uid = process.getuid?.() ?? 1000;
+  const xdgRuntime = process.env.XDG_RUNTIME_DIR || `/run/user/${uid}`;
+
+  const execEnv = {
+    ...process.env,
+    HOME: openclawHome,
+    PATH: `${nodeBinDir}:${process.env.PATH || '/usr/bin:/bin'}`,
+    XDG_RUNTIME_DIR: xdgRuntime,
+    DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS || `unix:path=${xdgRuntime}/bus`,
+  };
+
+  // Step 1: restart the gateway
+  const restartResult = await new Promise<{ ok: boolean; output: string }>((resolve) => {
+    execFile(openclawBin, ['gateway', 'restart'], {
+      timeout: GATEWAY_RESTART_TIMEOUT_MS,
+      maxBuffer: 512 * 1024,
+      env: execEnv,
+    }, (err, stdout, stderr) => {
+      const output = (stdout + stderr).trim();
+      if (err) {
+        resolve({ ok: false, output: output || err.message });
+      } else {
+        // Treat zero exit code as success; actual health is verified in step 2.
+        resolve({ ok: true, output });
+      }
+    });
+  });
+
+  if (!restartResult.ok) {
+    return c.json(restartResult, 500);
+  }
+
+  // Step 2: verify gateway is actually running AND listening (not just systemd reporting)
+  // Wait 2s after restart command, then retry up to 8 times with 1s delay (max ~10s total)
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  
+  let statusResult: { ok: boolean; output: string } | null = null;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    if (attempt > 0) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    
+    // First check if systemd reports it as running
+    statusResult = await new Promise<{ ok: boolean; output: string }>((resolve) => {
+      execFile(openclawBin, ['gateway', 'status'], {
+        timeout: 5000,
+        maxBuffer: 512 * 1024,
+        env: execEnv,
+      }, (err, stdout, stderr) => {
+        const output = (stdout + stderr).trim();
+        if (err) {
+          resolve({ ok: false, output: output || err.message });
+        } else {
+          // Check for positive running state AND absence of failure indicators
+          const running = output.includes('Runtime: running');
+          const activating = output.includes('state activating');
+          const failed = output.includes('last exit 1') && !running;
+          // activating is a normal transitional state -- keep retrying
+          const ok = running && !failed;
+          if (activating && !running) { resolve({ ok: false, output }); return; }
+          resolve({ ok, output });
+        }
+      });
+    });
+    
+    if (!statusResult.ok) continue;
+    
+    // If systemd reports running, verify the port is actually listening
+    const portTest = await new Promise<boolean>((resolve) => {
+      const socket = new Socket();
+      
+      const gwUrl = new URL(config.gatewayUrl);
+      const gwPort = parseInt(gwUrl.port, 10) || 18789;
+      socket.setTimeout(2000);
+      socket.connect(gwPort, gwUrl.hostname, () => {
+        socket.end();
+        resolve(true);
+      });
+      
+      socket.on('error', () => {
+        socket.destroy();
+        resolve(false);
+      });
+      socket.on('timeout', () => {
+        socket.destroy();
+        resolve(false);
+      });
+    });
+    
+    if (portTest) break;
+    
+    // Port not ready yet, continue retrying
+    statusResult.ok = false;
+    statusResult.output += '\nGateway running but port not ready yet';
+  }
+
+  if (!statusResult || !statusResult.ok) {
+    return c.json({
+      ok: false,
+      output: `Gateway restarted but not running. Status:\n${statusResult?.output || 'Status check failed'}`,
+    }, 500);
+  }
+
+  return c.json({ ok: true, output: 'Gateway restarted successfully' });
 });
 
 export default app;

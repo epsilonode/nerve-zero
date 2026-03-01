@@ -21,6 +21,7 @@ vi.mock('../lib/config.js', () => ({
 
 vi.mock('../middleware/rate-limit.js', () => ({
   rateLimitGeneral: vi.fn((_c: unknown, next: () => Promise<void>) => next()),
+  rateLimitRestart: vi.fn((_c: unknown, next: () => Promise<void>) => next()),
 }));
 
 vi.mock('../lib/openclaw-bin.js', () => ({
@@ -30,6 +31,34 @@ vi.mock('../lib/openclaw-bin.js', () => ({
 vi.mock('../lib/gateway-client.js', () => ({
   invokeGatewayTool: vi.fn(async (tool: string, args: Record<string, unknown>) => invokeGatewayImpl(tool, args)),
 }));
+
+const socketMock = vi.hoisted(() => ({
+  connectOk: false as boolean,
+}));
+
+vi.mock('node:net', () => {
+  class MockSocket {
+    private handlers: Record<string, (() => void)[]> = {};
+    setTimeout() { return this; }
+    connect(_port: number, _host: string, cb: () => void) {
+      queueMicrotask(() => {
+        if (socketMock.connectOk) { cb(); }
+        else { this.emit('error'); }
+      });
+      return this;
+    }
+    on(event: string, handler: () => void) {
+      (this.handlers[event] ??= []).push(handler);
+      return this;
+    }
+    end() {}
+    destroy() {}
+    private emit(event: string) {
+      for (const h of this.handlers[event] ?? []) h();
+    }
+  }
+  return { Socket: MockSocket, default: { Socket: MockSocket } };
+});
 
 const GOOD_MODELS = JSON.stringify({
   models: [
@@ -92,6 +121,7 @@ describe('gateway routes', () => {
       }));
       vi.doMock('../middleware/rate-limit.js', () => ({
         rateLimitGeneral: vi.fn((_c: unknown, next: () => Promise<void>) => next()),
+        rateLimitRestart: vi.fn((_c: unknown, next: () => Promise<void>) => next()),
       }));
       vi.doMock('../lib/openclaw-bin.js', () => ({
         resolveOpenclawBin: () => '/usr/bin/openclaw',
@@ -229,6 +259,119 @@ describe('gateway routes', () => {
         body: JSON.stringify({ model: 'x'.repeat(300) }),
       });
       expect(res.status).toBe(400);
+    });
+  });
+
+  describe('POST /api/gateway/restart', () => {
+    afterEach(() => {
+      socketMock.connectOk = false;
+      vi.useRealTimers();
+    });
+
+    it('returns 500 when restart command fails', async () => {
+      vi.useFakeTimers();
+      execFileImpl = (_bin: unknown, _args: unknown, _opts: unknown, cb: unknown) => {
+        (cb as (err: Error, stdout: string) => void)(new Error('restart failed'), '');
+      };
+      const app = buildApp();
+      const resPromise = app.request('/api/gateway/restart', { method: 'POST' });
+      await vi.runAllTimersAsync();
+      const res = await resPromise;
+      expect(res.status).toBe(500);
+      const json = await res.json() as { ok: boolean; output: string };
+      expect(json.ok).toBe(false);
+    });
+
+    it('returns 500 when status indicates stopped', async () => {
+      vi.useFakeTimers();
+      let call = 0;
+      execFileImpl = (_bin: unknown, _args: unknown, _opts: unknown, cb: unknown) => {
+        if (call === 0) {
+          call++;
+          (cb as (err: null, stdout: string) => void)(null, 'Restarted');
+        } else {
+          (cb as (err: null, stdout: string) => void)(null, 'Runtime: stopped\nlast exit 1');
+        }
+      };
+      const app = buildApp();
+      const resPromise = app.request('/api/gateway/restart', { method: 'POST' });
+      await vi.runAllTimersAsync();
+      const res = await resPromise;
+      expect(res.status).toBe(500);
+      const json = await res.json() as { ok: boolean; output: string };
+      expect(json.ok).toBe(false);
+      expect(json.output).toMatch(/Status:/);
+      expect(json.output).toMatch(/Runtime: stopped/);
+    });
+
+    it('provides DBus session env fallbacks when vars are missing', async () => {
+      vi.useFakeTimers();
+      const origXdg = process.env.XDG_RUNTIME_DIR;
+      const origDbus = process.env.DBUS_SESSION_BUS_ADDRESS;
+      delete process.env.XDG_RUNTIME_DIR;
+      delete process.env.DBUS_SESSION_BUS_ADDRESS;
+
+      let capturedEnv: Record<string, string> | undefined;
+      execFileImpl = (_bin: unknown, _args: unknown, opts: unknown, cb: unknown) => {
+        capturedEnv = (opts as { env: Record<string, string> }).env;
+        (cb as (err: Error, stdout: string) => void)(new Error('restart failed'), '');
+      };
+      const app = buildApp();
+      const resPromise = app.request('/api/gateway/restart', { method: 'POST' });
+      await vi.runAllTimersAsync();
+      await resPromise;
+
+      expect(capturedEnv).toBeDefined();
+      expect(capturedEnv!.XDG_RUNTIME_DIR).toMatch(/^\/run\/user\/\d+$/);
+      expect(capturedEnv!.DBUS_SESSION_BUS_ADDRESS).toMatch(/^unix:path=\/run\/user\/\d+\/bus$/);
+
+      // Restore
+      if (origXdg !== undefined) process.env.XDG_RUNTIME_DIR = origXdg;
+      if (origDbus !== undefined) process.env.DBUS_SESSION_BUS_ADDRESS = origDbus;
+    });
+
+    it('returns 200 on successful restart with port reachable', async () => {
+      vi.useFakeTimers();
+      socketMock.connectOk = true;
+      let call = 0;
+      execFileImpl = (_bin: unknown, _args: unknown, _opts: unknown, cb: unknown) => {
+        if (call === 0) {
+          call++;
+          (cb as (err: null, stdout: string) => void)(null, 'Restarted');
+        } else {
+          (cb as (err: null, stdout: string) => void)(null, 'Runtime: running');
+        }
+      };
+      const app = buildApp();
+      const resPromise = app.request('/api/gateway/restart', { method: 'POST' });
+      await vi.runAllTimersAsync();
+      const res = await resPromise;
+      expect(res.status).toBe(200);
+      const json = await res.json() as { ok: boolean; output: string };
+      expect(json.ok).toBe(true);
+      expect(json.output).toMatch(/successfully/i);
+    });
+
+    it('returns 500 when status says running but port is not reachable', async () => {
+      vi.useFakeTimers();
+      socketMock.connectOk = false;
+      let call = 0;
+      execFileImpl = (_bin: unknown, _args: unknown, _opts: unknown, cb: unknown) => {
+        if (call === 0) {
+          call++;
+          (cb as (err: null, stdout: string) => void)(null, 'Restarted');
+        } else {
+          (cb as (err: null, stdout: string) => void)(null, 'Runtime: running');
+        }
+      };
+      const app = buildApp();
+      const resPromise = app.request('/api/gateway/restart', { method: 'POST' });
+      await vi.runAllTimersAsync();
+      const res = await resPromise;
+      expect(res.status).toBe(500);
+      const json = await res.json() as { ok: boolean; output: string };
+      expect(json.ok).toBe(false);
+      expect(json.output).toMatch(/port not ready/);
     });
   });
 });
