@@ -7,6 +7,7 @@
  * @module
  */
 
+import crypto from 'node:crypto';
 import { Hono } from 'hono';
 import { setCookie, deleteCookie, getCookie } from 'hono/cookie';
 import { config, SESSION_COOKIE_NAME } from '../lib/config.js';
@@ -14,6 +15,21 @@ import { createSession, verifySession, verifyPassword } from '../lib/session.js'
 import { rateLimitAuth } from '../middleware/rate-limit.js';
 
 const app = new Hono();
+
+function matchesGatewayTokenFallback(password: string): boolean {
+  if (config.passwordHash || !config.gatewayToken) {
+    return false;
+  }
+
+  const provided = Buffer.from(password);
+  const expected = Buffer.from(config.gatewayToken);
+
+  if (provided.length !== expected.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(provided, expected);
+}
 
 /**
  * POST /api/auth/login
@@ -36,9 +52,10 @@ app.post('/api/auth/login', rateLimitAuth, async (c) => {
 
     let valid = false;
 
-    // Check against stored password hash
     if (config.passwordHash) {
       valid = await verifyPassword(password, config.passwordHash);
+    } else if (matchesGatewayTokenFallback(password)) {
+      valid = true;
     }
 
     if (!valid) {
