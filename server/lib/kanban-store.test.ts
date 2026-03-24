@@ -794,6 +794,36 @@ describe('completeRun', () => {
     await expect(store.completeRun(task.id, 'missing-run-key', 'result')).rejects.toThrow(InvalidTransitionError);
   });
 
+  it('completes when the child session key matches the active run identifiers', async () => {
+    const task = await createSampleTask({ status: 'todo' });
+    const executed = await store.executeTask(task.id);
+    const linked = await store.attachRunIdentifiers(executed.id, executed.run!.sessionKey, {
+      childSessionKey: 'agent:main:subagent:stable-child',
+      runId: 'stable-run-123',
+    });
+
+    const completed = await store.completeRun(linked!.id, 'agent:main:subagent:stable-child', 'Task output here');
+    expect(completed.status).toBe('review');
+    expect(completed.run!.status).toBe('done');
+    expect(completed.run!.childSessionKey).toBe('agent:main:subagent:stable-child');
+    expect(completed.run!.runId).toBe('stable-run-123');
+  });
+
+  it('completes when the runId matches the active run identifiers', async () => {
+    const task = await createSampleTask({ status: 'todo' });
+    const executed = await store.executeTask(task.id);
+    const linked = await store.attachRunIdentifiers(executed.id, executed.run!.sessionKey, {
+      childSessionKey: 'agent:main:subagent:stable-child',
+      runId: 'stable-run-123',
+    });
+
+    const completed = await store.completeRun(linked!.id, 'stable-run-123', 'Task output here');
+    expect(completed.status).toBe('review');
+    expect(completed.run!.status).toBe('done');
+    expect(completed.run!.childSessionKey).toBe('agent:main:subagent:stable-child');
+    expect(completed.run!.runId).toBe('stable-run-123');
+  });
+
   it('throws InvalidTransitionError when session key does not match the active run', async () => {
     const task = await createSampleTask({ status: 'todo' });
     const executed = await store.executeTask(task.id);

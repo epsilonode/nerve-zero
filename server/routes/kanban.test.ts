@@ -346,6 +346,30 @@ describe('PATCH /api/kanban/tasks/:id', () => {
     });
     expect(res.status).toBe(400);
   });
+
+  it('ignores client attempts to patch server-owned run fields', async () => {
+    const app = await buildApp();
+    const task = await createTask(app);
+
+    const res = await app.request(`/api/kanban/tasks/${task.id}`, jsonPatch({
+      version: task.version,
+      title: 'Updated',
+      run: {
+        sessionKey: 'malicious-run',
+        startedAt: Date.now(),
+        status: 'done',
+      },
+    }));
+    expect(res.status).toBe(200);
+    const updated = await res.json() as KanbanTask;
+    expect(updated.title).toBe('Updated');
+    expect(updated.run).toBeUndefined();
+
+    const listRes = await app.request('/api/kanban/tasks');
+    const body = await listRes.json() as { items: KanbanTask[] };
+    const fresh = body.items.find((item) => item.id === task.id);
+    expect(fresh?.run).toBeUndefined();
+  });
 });
 
 // ── DELETE /api/kanban/tasks/:id ─────────────────────────────────────
@@ -1402,7 +1426,7 @@ describe('POST /api/kanban/tasks/:id/complete — run key integrity', () => {
   it('ignores late stale poller completion from run 1 after run 2 is active', async () => {
     vi.useFakeTimers();
 
-    let run1Label: string | undefined;
+    const runState: { run1Label?: string } = {};
     const invokeGatewayToolMock: GatewayToolMock = vi.fn(async (tool) => {
       if (tool === 'sessions_spawn') {
         return { childSessionKey: 'gateway-session' };
@@ -1410,8 +1434,8 @@ describe('POST /api/kanban/tasks/:id/complete — run key integrity', () => {
       if (tool === 'subagents') {
         return {
           active: [],
-          recent: run1Label
-            ? [{ label: run1Label, status: 'done', sessionKey: 'gateway-run-1' }]
+          recent: runState.run1Label
+            ? [{ label: runState.run1Label, status: 'done', sessionKey: 'gateway-run-1' }]
             : [],
         };
       }
@@ -1434,7 +1458,7 @@ describe('POST /api/kanban/tasks/:id/complete — run key integrity', () => {
     const run1Res = await app.request(`/api/kanban/tasks/${created.id}/execute`, json({}));
     expect(run1Res.status).toBe(200);
     const run1 = await run1Res.json() as KanbanTask;
-    run1Label = run1.run!.sessionKey;
+    runState.run1Label = run1.run!.sessionKey;
 
     const abortRes = await app.request(`/api/kanban/tasks/${created.id}/abort`, json({ note: 'rerun' }));
     expect(abortRes.status).toBe(200);

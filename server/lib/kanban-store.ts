@@ -49,6 +49,13 @@ function uniqueRunSessionKey(id: string, now: number): string {
   return nextSequence === 1 ? base : `${base}-${nextSequence.toString(36)}`;
 }
 
+function matchesRunIdentifier(run: TaskRunLink, value: string): boolean {
+  return value === run.sessionKey
+    || value === run.childSessionKey
+    || value === run.sessionId
+    || value === run.runId;
+}
+
 // ── Types ────────────────────────────────────────────────────────────
 
 export type TaskStatus = 'backlog' | 'todo' | 'in-progress' | 'review' | 'done' | 'cancelled';
@@ -1005,7 +1012,7 @@ export class KanbanStore {
         );
       }
 
-      if (task.run.sessionKey !== sessionKey) {
+      if (!matchesRunIdentifier(task.run, sessionKey)) {
         throw new InvalidTransitionError(
           task.status,
           error ? 'todo' : 'review',

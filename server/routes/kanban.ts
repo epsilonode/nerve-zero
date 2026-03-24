@@ -450,7 +450,7 @@ app.patch('/api/kanban/tasks/:id', rateLimitGeneral, async (c) => {
   // Convert nulls to undefined for optional clearing
   const cleanPatch = Object.fromEntries(
     Object.entries(rawPatch)
-      .filter(([, v]) => v !== undefined)
+      .filter(([k, v]) => k !== 'run' && v !== undefined)
       .map(([k, v]) => [k, v === null ? undefined : v]),
   ) as Record<string, unknown>;
 
