@@ -36,7 +36,7 @@ import {
   type EnvConfig,
 } from './lib/env-writer.js';
 import { generateSelfSignedCert } from './lib/cert-gen.js';
-import { detectGatewayConfig, getEnvGatewayToken, restartGateway, approveAllPendingDevices, detectNeededConfigChanges, type ConfigChange } from './lib/gateway-detect.js';
+import { detectGatewayConfig, getEnvGatewayToken, chooseSetupGatewayToken, restartGateway, approvePendingNerveDevice, detectNeededConfigChanges, type ConfigChange } from './lib/gateway-detect.js';
 import { applyAccessPlanToConfig, buildAccessPlan, type InstallerAccessProfile } from './lib/access-plan.js';
 import { getTailscaleState, type TailscaleState } from './lib/tailscale.js';
 
@@ -132,7 +132,7 @@ async function applyConfigChanges(changes: ConfigChange[]): Promise<void> {
     if (restart.ok) {
       await new Promise(r => setTimeout(r, 3000));
       if (shouldApprovePending) {
-        const approved = approveAllPendingDevices();
+        const approved = approvePendingNerveDevice();
         if (approved.ok && approved.approved > 0) {
           success(approved.message);
         } else if (!approved.ok) {
@@ -336,15 +336,19 @@ async function collectInteractive(
   // Auto-detect gateway config
   const detected = detectGatewayConfig();
   const envToken = getEnvGatewayToken();
+  const tokenChoice = chooseSetupGatewayToken({
+    existingToken: existing.GATEWAY_TOKEN,
+    detectedToken: detected.token,
+    envToken,
+  });
 
-  // Determine default token (priority: existing > env > detected)
-  const defaultToken = existing.GATEWAY_TOKEN || envToken || detected.token || '';
+  const defaultToken = tokenChoice.token || '';
   const defaultUrl = existing.GATEWAY_URL || detected.url || DEFAULTS.GATEWAY_URL;
 
-  if (detected.token && !existing.GATEWAY_TOKEN) {
-    success('Auto-detected gateway token from ~/.openclaw/openclaw.json');
+  if (tokenChoice.source === 'detected') {
+    success('Auto-detected gateway token from local gateway config');
   }
-  if (envToken && !existing.GATEWAY_TOKEN && !detected.token) {
+  if (tokenChoice.source === 'env') {
     success('Found OPENCLAW_GATEWAY_TOKEN in environment');
   }
 
@@ -360,9 +364,10 @@ async function collectInteractive(
 
   // If we have an auto-detected token, offer to use it
   if (defaultToken && !existing.GATEWAY_TOKEN) {
+    const tokenLabel = tokenChoice.source === 'env' ? 'environment token' : 'detected token';
     const useDetected = await confirm({
     theme: promptTheme,
-      message: `Use detected token (${defaultToken})?`,
+      message: `Use ${tokenLabel} (${defaultToken})?`,
       default: true,
     });
     if (useDetected) {
@@ -412,22 +417,14 @@ async function collectInteractive(
   const rail = `  \x1b[2m│\x1b[0m`;
   const testPrefix = process.env.NERVE_INSTALLER ? `${rail}  ` : '  ';
   process.stdout.write(`${testPrefix}Testing connection... `);
-  const gwTest = await testGatewayConnection(config.GATEWAY_URL!);
+  const gwTest = await testGatewayConnection(config.GATEWAY_URL!, config.GATEWAY_TOKEN);
   if (gwTest.ok) {
     console.log(`\x1b[32m✓\x1b[0m ${gwTest.message}`);
   } else {
     console.log(`\x1b[31m✗\x1b[0m ${gwTest.message}`);
     dim('  Start it with: openclaw gateway start');
-    const proceed = await confirm({
-    theme: promptTheme,
-      message: 'Gateway is unreachable. Continue with this URL anyway?',
-      default: false,
-    });
-    if (!proceed) {
-      console.log('\n  Start your gateway with: \x1b[36mopenclaw gateway start\x1b[0m');
-      console.log('  Then re-run: \x1b[36mnpm run setup\x1b[0m\n');
-      process.exit(1);
-    }
+    console.log('\n  Setup could not verify your gateway token. Fix the gateway or token, then re-run setup.\n');
+    process.exit(1);
   }
 
   // ── 2/5: Agent Identity ──────────────────────────────────────────
@@ -1030,13 +1027,14 @@ async function runCheck(config: EnvConfig): Promise<void> {
   if (isValidUrl(gwUrl)) {
     success(`GATEWAY_URL is valid: ${gwUrl}`);
 
-    // Test connectivity
+    // Test connectivity and token validity
     process.stdout.write('  Testing gateway connection... ');
-    const gwTest = await testGatewayConnection(gwUrl);
+    const gwTest = await testGatewayConnection(gwUrl, config.GATEWAY_TOKEN);
     if (gwTest.ok) {
       console.log(`\x1b[32m✓\x1b[0m ${gwTest.message}`);
     } else {
-      console.log(`\x1b[33m⚠\x1b[0m ${gwTest.message}`);
+      console.log(`\x1b[31m✗\x1b[0m ${gwTest.message}`);
+      errors++;
     }
   } else {
     fail(`GATEWAY_URL is invalid: ${gwUrl}`);
@@ -1133,11 +1131,14 @@ async function runDefaults(existing: EnvConfig, prereqs: PrereqResult): Promise<
   if (!config.GATEWAY_TOKEN) {
     const detected = detectGatewayConfig();
     const envToken = getEnvGatewayToken();
-    const token = envToken || detected.token;
+    const tokenChoice = chooseSetupGatewayToken({
+      detectedToken: detected.token,
+      envToken,
+    });
 
-    if (token) {
-      config.GATEWAY_TOKEN = token;
-      success('Auto-detected gateway token');
+    if (tokenChoice.token) {
+      config.GATEWAY_TOKEN = tokenChoice.token;
+      success(`Auto-detected gateway token${tokenChoice.source === 'env' ? ' from environment' : ''}`);
     } else {
       fail('GATEWAY_TOKEN is required but could not be auto-detected');
       console.log('  Set OPENCLAW_GATEWAY_TOKEN in your environment, or run setup interactively.');
@@ -1198,6 +1199,17 @@ async function runDefaults(existing: EnvConfig, prereqs: PrereqResult): Promise<
     } else {
       warn('Network-exposed without authentication — consider running interactive setup');
     }
+  }
+
+  process.stdout.write('  Testing gateway connection... ');
+  const gwTest = await testGatewayConnection(config.GATEWAY_URL!, config.GATEWAY_TOKEN);
+  if (gwTest.ok) {
+    console.log(`\x1b[32m✓\x1b[0m ${gwTest.message}`);
+  } else {
+    console.log(`\x1b[31m✗\x1b[0m ${gwTest.message}`);
+    fail('Refusing to write .env because gateway auth could not be verified.');
+    console.log('');
+    process.exit(1);
   }
 
   if (existsSync(ENV_PATH)) {

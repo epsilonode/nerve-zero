@@ -7,6 +7,7 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
+import type { ExecSyncOptions } from 'node:child_process';
 import { join } from 'node:path';
 import crypto from 'node:crypto';
 import os from 'node:os';
@@ -37,12 +38,26 @@ export interface DetectedGateway {
   url: string | null;
 }
 
+export type GatewayTokenSource = 'existing' | 'detected' | 'env' | 'none';
+
+export interface GatewayTokenChoice {
+  token: string | null;
+  source: GatewayTokenSource;
+}
+
 /**
  * Attempt to auto-detect gateway configuration from the local OpenClaw install.
  * Returns null values for anything that can't be detected.
  */
 export function detectGatewayConfig(): DetectedGateway {
   const result: DetectedGateway = { token: null, url: null };
+
+  // The gateway process prefers the systemd env var over the config file token,
+  // so detect it first even when openclaw.json is absent or broken.
+  const systemdToken = readSystemdGatewayToken();
+  if (systemdToken) {
+    result.token = systemdToken;
+  }
 
   if (!existsSync(OPENCLAW_CONFIG)) {
     return result;
@@ -52,13 +67,7 @@ export function detectGatewayConfig(): DetectedGateway {
     const raw = readFileSync(OPENCLAW_CONFIG, 'utf-8');
     const config = JSON.parse(raw) as OpenClawConfig;
 
-    // Extract token — systemd env var takes priority over config file because
-    // the gateway process uses the env var when both exist (known 2026.2.19 bug:
-    // onboard writes different tokens to the service file and openclaw.json).
-    const systemdToken = readSystemdGatewayToken();
-    if (systemdToken) {
-      result.token = systemdToken;
-    } else if (config.gateway?.auth?.token) {
+    if (!result.token && config.gateway?.auth?.token) {
       result.token = config.gateway.auth.token;
     }
 
@@ -66,7 +75,7 @@ export function detectGatewayConfig(): DetectedGateway {
     const port = config.gateway?.port || 18789;
     result.url = `http://127.0.0.1:${port}`;
   } catch {
-    // Config exists but can't be parsed — return nulls
+    // Config exists but can't be parsed — keep any detected token and return null URL
   }
 
   return result;
@@ -98,6 +107,23 @@ function readSystemdGatewayToken(): string | null {
  */
 export function getEnvGatewayToken(): string | null {
   return process.env.OPENCLAW_GATEWAY_TOKEN || null;
+}
+
+export function chooseSetupGatewayToken(opts: {
+  existingToken?: string | null;
+  detectedToken?: string | null;
+  envToken?: string | null;
+}): GatewayTokenChoice {
+  const existingToken = opts.existingToken?.trim();
+  if (existingToken) return { token: existingToken, source: 'existing' };
+
+  const detectedToken = opts.detectedToken?.trim();
+  if (detectedToken) return { token: detectedToken, source: 'detected' };
+
+  const envToken = opts.envToken?.trim();
+  if (envToken) return { token: envToken, source: 'env' };
+
+  return { token: null, source: 'none' };
 }
 
 export interface GatewayPatchResult {
@@ -203,6 +229,116 @@ const FULL_OPERATOR_SCOPES = [
   'operator.pairing',
 ];
 
+interface DeviceIdentityMatch {
+  deviceId?: string;
+  publicKey?: string;
+}
+
+interface PendingDeviceRequest {
+  requestId?: string;
+  deviceId?: string;
+  publicKey?: string;
+}
+
+const SAFE_DEVICE_REQUEST_ID_RE = /^[A-Za-z0-9_-]+$/;
+
+type PendingDeviceExec = (
+  command: string,
+  options?: Pick<ExecSyncOptions, 'timeout' | 'stdio'>,
+) => string | Buffer;
+
+function hasFullOperatorScopes(scopes?: string[]): boolean {
+  return FULL_OPERATOR_SCOPES.every(scope => (scopes || []).includes(scope));
+}
+
+function readGatewayDeviceId(): string | null {
+  const deviceJsonPath = join(HOME, '.openclaw', 'identity', 'device.json');
+  if (!existsSync(deviceJsonPath)) return null;
+
+  try {
+    const device = JSON.parse(readFileSync(deviceJsonPath, 'utf-8')) as { deviceId?: string };
+    return device.deviceId || null;
+  } catch {
+    return null;
+  }
+}
+
+function readNerveDeviceIdentity(): DeviceIdentityMatch | null {
+  const nerveDir = process.env.NERVE_DATA_DIR || join(process.env.HOME || HOME, '.nerve');
+  const identityPath = join(nerveDir, 'device-identity.json');
+  if (!existsSync(identityPath)) return null;
+
+  try {
+    const stored = JSON.parse(readFileSync(identityPath, 'utf-8')) as {
+      deviceId?: string;
+      publicKeyB64url?: string;
+    };
+    const deviceId = stored.deviceId?.trim();
+    const publicKey = stored.publicKeyB64url?.trim();
+    if (!deviceId && !publicKey) return null;
+    return { deviceId, publicKey };
+  } catch {
+    return null;
+  }
+}
+
+function matchesPendingDeviceRequest(item: PendingDeviceRequest, identity: DeviceIdentityMatch): boolean {
+  const requestDeviceId = item.deviceId?.trim();
+  const requestPublicKey = item.publicKey?.trim();
+
+  if (identity.deviceId && identity.publicKey) {
+    return requestDeviceId === identity.deviceId && requestPublicKey === identity.publicKey;
+  }
+
+  if (identity.deviceId) {
+    return requestDeviceId === identity.deviceId;
+  }
+
+  if (identity.publicKey) {
+    return requestPublicKey === identity.publicKey;
+  }
+
+  return false;
+}
+
+function localIdentityNeedsScopeFix(targetDeviceId: string): boolean {
+  const identityPath = join(HOME, '.openclaw', 'identity', 'device-auth.json');
+  if (!existsSync(identityPath)) return false;
+
+  try {
+    const identity = JSON.parse(readFileSync(identityPath, 'utf-8')) as {
+      deviceId?: string;
+      tokens?: Record<string, { scopes?: string[] }>;
+    };
+    const identityDeviceId = identity.deviceId?.trim();
+    if (identityDeviceId && identityDeviceId !== targetDeviceId) {
+      return false;
+    }
+    return Object.values(identity.tokens || {}).some(token => !hasFullOperatorScopes(token.scopes));
+  } catch {
+    return false;
+  }
+}
+
+function repairPairedDeviceScopes(device: {
+  scopes?: string[];
+  tokens?: Record<string, { scopes?: string[] }>;
+}): boolean {
+  let changed = false;
+
+  if (!hasFullOperatorScopes(device.scopes)) {
+    device.scopes = [...FULL_OPERATOR_SCOPES];
+    changed = true;
+  }
+
+  if (device.tokens?.operator && !hasFullOperatorScopes(device.tokens.operator.scopes)) {
+    device.tokens.operator.scopes = [...FULL_OPERATOR_SCOPES];
+    changed = true;
+  }
+
+  return changed;
+}
+
 /**
  * Bootstrap paired.json from scratch on a fresh install.
  * Reads the gateway's own device identity and creates the paired file
@@ -298,7 +434,9 @@ function bootstrapPairedJson(): { ok: boolean; message: string; needsRestart: bo
  * This function upgrades the gateway's own device scopes in paired.json and
  * restarts the gateway, breaking the deadlock.
  */
-export function fixGatewayDeviceScopes(): { ok: boolean; message: string; needsRestart: boolean } {
+export function fixGatewayDeviceScopes(opts: {
+  targetDeviceId?: string;
+} = {}): { ok: boolean; message: string; needsRestart: boolean } {
   const pairedPath = join(HOME, '.openclaw', 'devices', 'paired.json');
 
   if (!existsSync(pairedPath)) {
@@ -307,59 +445,60 @@ export function fixGatewayDeviceScopes(): { ok: boolean; message: string; needsR
     return bootstrapPairedJson();
   }
 
+  const targetDeviceId = opts.targetDeviceId || readGatewayDeviceId();
+  if (!targetDeviceId) {
+    return { ok: false, message: 'Could not determine which gateway device to repair', needsRestart: false };
+  }
+
   try {
     const raw = readFileSync(pairedPath, 'utf-8');
     const paired = JSON.parse(raw) as Record<string, {
       scopes?: string[];
       tokens?: Record<string, { scopes?: string[] }>;
-      clientId?: string;
     }>;
 
-    let fixed = false;
-    for (const [, device] of Object.entries(paired)) {
-      const currentScopes = device.scopes || [];
-      const missing = FULL_OPERATOR_SCOPES.filter(s => !currentScopes.includes(s));
-
-      if (missing.length > 0) {
-        device.scopes = FULL_OPERATOR_SCOPES;
-        if (device.tokens?.operator) {
-          device.tokens.operator.scopes = FULL_OPERATOR_SCOPES;
-        }
-        fixed = true;
-      }
+    const targetDevice = paired[targetDeviceId];
+    if (!targetDevice) {
+      return { ok: false, message: `Target device not found in paired.json: ${targetDeviceId}`, needsRestart: false };
     }
 
-    if (!fixed) {
-      return { ok: true, message: 'Device scopes already correct', needsRestart: false };
+    const pairedChanged = repairPairedDeviceScopes(targetDevice);
+    if (pairedChanged) {
+      writeFileSync(pairedPath, JSON.stringify(paired, null, 2) + '\n');
     }
-
-    writeFileSync(pairedPath, JSON.stringify(paired, null, 2) + '\n');
 
     // Also fix the CLI's own identity file — without this the gateway sees a
     // scope mismatch (token claims operator.read, paired.json says full set)
     // and triggers a scope-upgrade request that requires approval scopes to
     // approve, creating another deadlock.
+    let identityChanged = false;
     const identityPath = join(HOME, '.openclaw', 'identity', 'device-auth.json');
     if (existsSync(identityPath)) {
       try {
         const idRaw = readFileSync(identityPath, 'utf-8');
         const identity = JSON.parse(idRaw) as {
+          deviceId?: string;
           tokens?: Record<string, { scopes?: string[] }>;
         };
-        let idFixed = false;
-        for (const [, tok] of Object.entries(identity.tokens || {})) {
-          const missing = FULL_OPERATOR_SCOPES.filter(s => !(tok.scopes || []).includes(s));
-          if (missing.length > 0) {
-            tok.scopes = FULL_OPERATOR_SCOPES;
-            idFixed = true;
+        const identityDeviceId = identity.deviceId?.trim();
+        if (!identityDeviceId || identityDeviceId === targetDeviceId) {
+          for (const [, tok] of Object.entries(identity.tokens || {})) {
+            if (!hasFullOperatorScopes(tok.scopes)) {
+              tok.scopes = [...FULL_OPERATOR_SCOPES];
+              identityChanged = true;
+            }
           }
         }
-        if (idFixed) {
+        if (identityChanged) {
           writeFileSync(identityPath, JSON.stringify(identity, null, 2) + '\n');
         }
       } catch {
         // Non-fatal — paired.json fix is the critical one
       }
+    }
+
+    if (!pairedChanged && !identityChanged) {
+      return { ok: true, message: 'Device scopes already correct', needsRestart: false };
     }
 
     return { ok: true, message: 'Upgraded gateway device scopes', needsRestart: true };
@@ -373,54 +512,76 @@ export function fixGatewayDeviceScopes(): { ok: boolean; message: string; needsR
 }
 
 /**
- * Approve all pending device pairing requests via the CLI.
- * Call after fixing scopes + restarting the gateway.
+ * Approve only the pending pairing request that can be safely matched to Nerve.
+ * If the request cannot be identified unambiguously, fail closed and require manual approval.
  */
-export function approveAllPendingDevices(): { ok: boolean; approved: number; message: string } {
+export function approvePendingNerveDevice(deps: {
+  exec?: PendingDeviceExec;
+} = {}): { ok: boolean; approved: number; message: string } {
+  const run = deps.exec || execSync;
+  const identity = readNerveDeviceIdentity();
+  if (!identity) {
+    return {
+      ok: false,
+      approved: 0,
+      message: 'Could not identify Nerve device identity, approve manually with `openclaw devices list`',
+    };
+  }
+
   try {
-    const listOutput = execSync('openclaw devices list --json 2>/dev/null || echo "[]"', {
+    const listOutput = run('openclaw devices list --json 2>/dev/null', {
       timeout: 10000,
       stdio: ['pipe', 'pipe', 'pipe'],
     }).toString();
 
-    // Parse pending requests — try JSON first, fall back to box-drawing table regex
-    const pendingIds: string[] = [];
+    let pendingItems: PendingDeviceRequest[] = [];
     try {
       const parsed = JSON.parse(listOutput);
-      const items = Array.isArray(parsed?.pending) ? parsed.pending : [];
-      for (const item of items) {
-        if (item.requestId && typeof item.requestId === 'string') {
-          pendingIds.push(item.requestId);
-        }
+      if (!Array.isArray(parsed?.pending)) {
+        return {
+          ok: false,
+          approved: 0,
+          message: 'Could not safely inspect pending requests, approve Nerve manually with `openclaw devices list`',
+        };
       }
+      pendingItems = parsed.pending;
     } catch {
-      // Not valid JSON — fall back to table regex
-      const requestPattern = /│\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s+│/g;
-      let match;
-      while ((match = requestPattern.exec(listOutput)) !== null) {
-        pendingIds.push(match[1]);
+      return {
+        ok: false,
+        approved: 0,
+        message: 'Could not safely inspect pending requests, approve Nerve manually with `openclaw devices list`',
+      };
+    }
+
+    const matches = pendingItems.filter((item) => {
+      if (!item?.requestId || typeof item.requestId !== 'string') return false;
+      if (!SAFE_DEVICE_REQUEST_ID_RE.test(item.requestId)) return false;
+      return matchesPendingDeviceRequest(item, identity);
+    });
+
+    if (matches.length === 0) {
+      if (pendingItems.length === 0) {
+        return { ok: true, approved: 0, message: 'No pending requests' };
       }
+      return {
+        ok: false,
+        approved: 0,
+        message: 'Could not safely identify the Nerve request, approve manually with `openclaw devices list`',
+      };
     }
 
-    if (pendingIds.length === 0) {
-      return { ok: true, approved: 0, message: 'No pending requests' };
+    if (matches.length !== 1) {
+      return {
+        ok: false,
+        approved: 0,
+        message: 'Could not safely identify a single Nerve request, approve manually with `openclaw devices list`',
+      };
     }
 
-    let approved = 0;
-    for (const id of pendingIds) {
-      try {
-        execSync(`openclaw devices approve ${id}`, { timeout: 10000, stdio: 'pipe' });
-        approved++;
-      } catch { /* skip individual failures */ }
-    }
-
-    return {
-      ok: approved > 0,
-      approved,
-      message: approved > 0 ? `Approved ${approved} pending device(s)` : 'Failed to approve pending devices',
-    };
+    run(`openclaw devices approve ${matches[0].requestId}`, { timeout: 10000, stdio: 'pipe' });
+    return { ok: true, approved: 1, message: 'Approved Nerve pending device request' };
   } catch {
-    return { ok: false, approved: 0, message: 'Could not list pending devices' };
+    return { ok: false, approved: 0, message: 'Could not inspect pending requests safely, approve Nerve manually with `openclaw devices list`' };
   }
 }
 
@@ -485,6 +646,7 @@ export function prePairNerveDevice(gatewayToken?: string): { ok: boolean; messag
     // Update metadata/token if device already exists
     if (paired[deviceId]) {
       const existing = paired[deviceId] as {
+        scopes?: string[];
         displayName?: string;
         platform?: string;
         clientId?: string;
@@ -509,7 +671,7 @@ export function prePairNerveDevice(gatewayToken?: string): { ok: boolean; messag
         existing.tokens.operator = {
           token,
           role: 'operator',
-          scopes: FULL_OPERATOR_SCOPES,
+          scopes: [...FULL_OPERATOR_SCOPES],
           createdAtMs: now,
         };
         changed = true;
@@ -518,6 +680,11 @@ export function prePairNerveDevice(gatewayToken?: string): { ok: boolean; messag
         existing.tokens.operator.token = token;
         changed = true;
         changedFields.push('token');
+      }
+
+      if (repairPairedDeviceScopes(existing)) {
+        changed = true;
+        changedFields.push('scopes');
       }
 
       // OpenClaw 2026.2.26+ pins platform/device metadata on paired devices.
@@ -548,7 +715,7 @@ export function prePairNerveDevice(gatewayToken?: string): { ok: boolean; messag
       }
 
       writeFileSync(pairedPath, JSON.stringify(paired, null, 2) + '\n');
-      const fieldsLabel = changedFields.length > 0 ? ` (${changedFields.join(', ')})` : '';
+      const fieldsLabel = changedFields.length > 0 ? ` (${[...new Set(changedFields)].join(', ')})` : '';
       return {
         ok: true,
         message: `Updated Nerve paired device ${deviceId.substring(0, 12)}…${fieldsLabel}`,
@@ -609,15 +776,21 @@ function needsDeviceScopeFix(): boolean {
     return existsSync(deviceJsonPath);
   }
 
+  const gatewayDeviceId = readGatewayDeviceId();
+  if (!gatewayDeviceId) return false;
+
   try {
     const raw = readFileSync(pairedPath, 'utf-8');
-    const paired = JSON.parse(raw) as Record<string, { scopes?: string[] }>;
+    const paired = JSON.parse(raw) as Record<string, {
+      scopes?: string[];
+      tokens?: Record<string, { scopes?: string[] }>;
+    }>;
+    const targetDevice = paired[gatewayDeviceId];
 
-    for (const [, device] of Object.entries(paired)) {
-      const currentScopes = device.scopes || [];
-      const missing = FULL_OPERATOR_SCOPES.filter(s => !currentScopes.includes(s));
-      if (missing.length > 0) return true;
-    }
+    if (!hasFullOperatorScopes(targetDevice?.scopes)) return true;
+    if (targetDevice?.tokens?.operator && !hasFullOperatorScopes(targetDevice.tokens.operator.scopes)) return true;
+    if (localIdentityNeedsScopeFix(gatewayDeviceId)) return true;
+
     return false;
   } catch {
     return false;
@@ -646,17 +819,20 @@ function needsPrePair(gatewayToken?: string): boolean {
     if (!paired[deviceId]) return true; // Nerve not registered
 
     const existing = paired[deviceId] as {
+      scopes?: string[];
       displayName?: string;
       platform?: string;
       clientId?: string;
       clientMode?: string;
-      tokens?: Record<string, { token?: string }>;
+      tokens?: Record<string, { token?: string; scopes?: string[] }>;
     };
 
     // Check token match — if no token is available, assume mismatch (apply will generate one)
     const token = gatewayToken || detectGatewayConfig().token;
     if (!token) return true;
     if (existing.tokens?.operator?.token !== token) return true;
+    if (!hasFullOperatorScopes(existing.scopes)) return true;
+    if (!hasFullOperatorScopes(existing.tokens?.operator?.scopes)) return true;
 
     // OpenClaw 2026.2.26+ metadata pinning requires these to match runtime connect metadata.
     if (existing.platform !== NERVE_PAIRED_PLATFORM) return true;
@@ -713,6 +889,7 @@ export function detectNeededConfigChanges(opts: {
   gatewayToken?: string;
 }): ConfigChange[] {
   const changes: ConfigChange[] = [];
+  const pairedPath = join(HOME, '.openclaw', 'devices', 'paired.json');
 
   const deviceScopeFixNeeded = needsDeviceScopeFix();
 
@@ -726,7 +903,7 @@ export function detectNeededConfigChanges(opts: {
 
   // If device-scopes will bootstrap paired.json, always include pre-pair
   // (paired.json won't exist yet for detection, but will after device-scopes runs)
-  if (deviceScopeFixNeeded || needsPrePair(opts.gatewayToken)) {
+  if ((!existsSync(pairedPath) && deviceScopeFixNeeded) || needsPrePair(opts.gatewayToken)) {
     changes.push({
       id: 'pre-pair',
       description: 'Pre-pair Nerve device identity (skip manual approval step)',
