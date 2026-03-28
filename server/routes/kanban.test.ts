@@ -13,6 +13,17 @@ type GatewayToolMock = (tool: string, args?: Record<string, unknown>) => Promise
 beforeEach(async () => {
   vi.resetModules();
   tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'kanban-route-test-'));
+
+  // Default mock for RPC spawn helper (tests can override with vi.doMock before buildApp)
+  vi.doMock('../lib/kanban-worker-spawn.js', () => ({
+    spawnKanbanWorkerViaRpc: vi.fn(async () => {
+      await new Promise(resolve => setTimeout(resolve, 10));
+      return {
+        parentSessionKey: 'agent:main:main',
+        childSessionKey: 'agent:main:subagent:test',
+      };
+    }),
+  }));
 });
 
 afterEach(async () => {
@@ -653,6 +664,116 @@ describe('PUT /api/kanban/config', () => {
 // ── POST /api/kanban/tasks/:id/execute ───────────────────────────────
 
 describe('POST /api/kanban/tasks/:id/execute', () => {
+  it('launches worker via RPC helper, not HTTP sessions_spawn', async () => {
+    let spawnHelperCalled = false;
+    let httpSpawnCalled = false;
+
+    const invokeGatewayToolMock: GatewayToolMock = vi.fn(async (tool) => {
+      if (tool === 'sessions_spawn') {
+        httpSpawnCalled = true;
+        return {};
+      }
+      return {};
+    });
+
+    // Mock the RPC spawn helper
+    vi.doMock('../lib/kanban-worker-spawn.js', () => ({
+      spawnKanbanWorkerViaRpc: vi.fn(async () => {
+        spawnHelperCalled = true;
+        return {
+          parentSessionKey: 'agent:main:main',
+          childSessionKey: 'agent:main:subagent:test',
+        };
+      }),
+    }));
+
+    const app = await buildApp({ invokeGatewayToolMock });
+    const task = await createTask(app, { status: 'todo' });
+
+    const res = await app.request(`/api/kanban/tasks/${task.id}/execute`, json({}));
+    expect(res.status).toBe(200);
+
+    expect(spawnHelperCalled).toBe(true);
+    expect(httpSpawnCalled).toBe(false);
+  });
+
+  it('returns task immediately as in-progress without waiting for child discovery', async () => {
+    vi.doMock('../lib/kanban-worker-spawn.js', () => ({
+      spawnKanbanWorkerViaRpc: vi.fn(async () => {
+        await new Promise(resolve => setTimeout(resolve, 10_000)); // Long delay
+        return { parentSessionKey: 'agent:main:main' };
+      }),
+    }));
+
+    const app = await buildApp();
+    const task = await createTask(app, { status: 'todo' });
+
+    const start = Date.now();
+    const res = await app.request(`/api/kanban/tasks/${task.id}/execute`, json({}));
+    const elapsed = Date.now() - start;
+
+    expect(res.status).toBe(200);
+    expect(elapsed).toBeLessThan(1000); // Should return immediately, not wait 10s
+    const body = await res.json() as KanbanTask;
+    expect(body.status).toBe('in-progress');
+  });
+
+  it('persists discovered childSessionKey from helper', async () => {
+    const discoveredChildKey = 'agent:main:subagent:discovered';
+
+    vi.doMock('../lib/kanban-worker-spawn.js', () => ({
+      spawnKanbanWorkerViaRpc: vi.fn(async () => {
+        await new Promise(resolve => setTimeout(resolve, 10));
+        return {
+          parentSessionKey: 'agent:main:main',
+          childSessionKey: discoveredChildKey,
+          sessionId: discoveredChildKey,
+        };
+      }),
+    }));
+
+    const app = await buildApp();
+    const task = await createTask(app, { status: 'todo' });
+
+    const res = await app.request(`/api/kanban/tasks/${task.id}/execute`, json({}));
+    expect(res.status).toBe(200);
+
+    // Wait for helper to finish and attach identifiers
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    const listRes = await app.request('/api/kanban/tasks');
+    const tasks = await listRes.json() as { items: KanbanTask[] };
+    const updated = tasks.items.find(item => item.id === task.id);
+    expect(updated?.run?.childSessionKey).toBe(discoveredChildKey);
+    expect(updated?.run?.sessionId).toBe(discoveredChildKey);
+  });
+
+  it('handles helper rejection by marking spawn as failed', async () => {
+    vi.doMock('../lib/kanban-worker-spawn.js', () => ({
+      spawnKanbanWorkerViaRpc: vi.fn(async () => {
+        await new Promise(resolve => setTimeout(resolve, 10));
+        throw new Error('RPC connection failed');
+      }),
+    }));
+
+    const app = await buildApp();
+    const task = await createTask(app, { status: 'todo' });
+
+    const res = await app.request(`/api/kanban/tasks/${task.id}/execute`, json({}));
+    expect(res.status).toBe(200); // Still returns 200 because spawn is fire-and-forget
+
+    // Wait for helper to reject and error handler to run
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    const listRes = await app.request('/api/kanban/tasks');
+    const tasks = await listRes.json() as { items: KanbanTask[] };
+    const updated = tasks.items.find(item => item.id === task.id);
+    expect(updated?.status).toBe('todo'); // Should be back to todo after spawn failure
+    expect(updated?.run?.status).toBe('error');
+    expect(updated?.run?.error).toContain('Spawn failed');
+    expect(updated?.run?.error).toContain('RPC connection failed');
+  });
+
   it('executes a todo task', async () => {
     const app = await buildApp();
     const task = await createTask(app, { status: 'todo' });
@@ -1499,14 +1620,19 @@ describe('POST /api/kanban/tasks/:id/complete — run key integrity', () => {
   it('completes a run even when the gateway truncates the human-readable label', async () => {
     const gatewaySessionKey = 'agent:main:subagent:stable-child';
     let truncatedLabel = 'truncated-label';
-    const invokeGatewayToolMock = vi.fn(async (tool: string) => {
-      if (tool === 'sessions_spawn') {
+
+    vi.doMock('../lib/kanban-worker-spawn.js', () => ({
+      spawnKanbanWorkerViaRpc: vi.fn(async () => {
+        await new Promise(resolve => setTimeout(resolve, 10));
         return {
-          details: {
-            childSessionKey: gatewaySessionKey,
-          },
+          parentSessionKey: 'agent:main:main',
+          childSessionKey: gatewaySessionKey,
+          sessionId: gatewaySessionKey,
         };
-      }
+      }),
+    }));
+
+    const invokeGatewayToolMock = vi.fn(async (tool: string) => {
       if (tool === 'subagents') {
         return {
           active: [],
@@ -1555,22 +1681,25 @@ describe('POST /api/kanban/tasks/:id/complete — run key integrity', () => {
     expect(proposals.proposals.find((proposal) => proposal.payload.title === 'proposal from truncated label')).toBeDefined();
   });
 
-  it('persists spawned stable identifiers and still completes when only runId matches', async () => {
+  it('persists spawned stable identifiers and completes via childSessionKey', async () => {
     const childSessionKey = 'agent:main:subagent:stable-child';
-    const runId = 'stable-run-42';
-    const invokeGatewayToolMock = vi.fn(async (tool: string) => {
-      if (tool === 'sessions_spawn') {
+
+    vi.doMock('../lib/kanban-worker-spawn.js', () => ({
+      spawnKanbanWorkerViaRpc: vi.fn(async () => {
+        await new Promise(resolve => setTimeout(resolve, 10));
         return {
-          details: {
-            childSessionKey,
-            runId,
-          },
+          parentSessionKey: 'agent:main:main',
+          childSessionKey,
+          sessionId: childSessionKey,
         };
-      }
+      }),
+    }));
+
+    const invokeGatewayToolMock = vi.fn(async (tool: string) => {
       if (tool === 'subagents') {
         return {
           active: [],
-          recent: [{ label: 'totally-different-label', status: 'done', runId }],
+          recent: [{ label: 'totally-different-label', status: 'done', sessionKey: childSessionKey }],
         };
       }
       if (tool === 'sessions_history') {
@@ -1578,7 +1707,7 @@ describe('POST /api/kanban/tasks/:id/complete — run key integrity', () => {
           messages: [
             {
               role: 'assistant',
-              content: 'Done via runId',
+              content: 'Done via stable identifiers',
             },
           ],
         };
@@ -1595,10 +1724,15 @@ describe('POST /api/kanban/tasks/:id/complete — run key integrity', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 3_200));
 
-    expect(invokeGatewayToolMock).toHaveBeenCalledWith('sessions_history', {
+    // Verify sessions_history was called (may be after subagents poll)
+    const historyCalls = (invokeGatewayToolMock as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call) => call[0] === 'sessions_history'
+    );
+    expect(historyCalls.length).toBeGreaterThan(0);
+    expect(historyCalls[0]).toEqual(['sessions_history', {
       sessionKey: childSessionKey,
       limit: 3,
-    });
+    }]);
 
     const tasksRes = await app.request('/api/kanban/tasks');
     const tasks = await tasksRes.json() as { items: KanbanTask[] };
@@ -1608,20 +1742,23 @@ describe('POST /api/kanban/tasks/:id/complete — run key integrity', () => {
     expect(completed?.run?.sessionKey).toBe(running.run?.sessionKey);
     expect(completed?.run?.childSessionKey).toBe(childSessionKey);
     expect(completed?.run?.sessionId).toBe(childSessionKey);
-    expect(completed?.run?.runId).toBe(runId);
-    expect(completed?.result).toContain('Done via runId');
+    expect(completed?.result).toContain('Done via stable identifiers');
   });
 
   it('completes when sessions_spawn returns sessionId instead of childSessionKey', async () => {
     const childSessionKey = 'agent:main:subagent:alias-session-id';
-    const invokeGatewayToolMock = vi.fn(async (tool: string) => {
-      if (tool === 'sessions_spawn') {
+
+    vi.doMock('../lib/kanban-worker-spawn.js', () => ({
+      spawnKanbanWorkerViaRpc: vi.fn(async () => {
+        await new Promise(resolve => setTimeout(resolve, 10));
         return {
-          details: {
-            sessionId: childSessionKey,
-          },
+          parentSessionKey: 'agent:main:main',
+          sessionId: childSessionKey,
         };
-      }
+      }),
+    }));
+
+    const invokeGatewayToolMock = vi.fn(async (tool: string) => {
       if (tool === 'subagents') {
         return {
           active: [],
@@ -1668,10 +1805,18 @@ describe('POST /api/kanban/tasks/:id/complete — run key integrity', () => {
     vi.useFakeTimers();
 
     const runState: { run1Label?: string } = {};
+
+    vi.doMock('../lib/kanban-worker-spawn.js', () => ({
+      spawnKanbanWorkerViaRpc: vi.fn(async () => {
+        await new Promise(resolve => setTimeout(resolve, 10));
+        return {
+          parentSessionKey: 'agent:main:main',
+          childSessionKey: 'gateway-session',
+        };
+      }),
+    }));
+
     const invokeGatewayToolMock: GatewayToolMock = vi.fn(async (tool) => {
-      if (tool === 'sessions_spawn') {
-        return { childSessionKey: 'gateway-session' };
-      }
       if (tool === 'subagents') {
         return {
           active: [],
@@ -1740,9 +1885,16 @@ describe('full workflow via HTTP', () => {
     const executed = await execRes.json() as KanbanTask;
     expect(executed.status).toBe('in-progress');
 
+    // Wait for fire-and-forget RPC helper to attach identifiers
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // Refetch to get latest version
+    const refetchRes = await app.request(`/api/kanban/tasks/${task.id}`);
+    const latest = await refetchRes.json() as KanbanTask;
+
     // Manually move to review (simulating completeRun via PATCH)
     const reviewRes = await app.request(`/api/kanban/tasks/${task.id}`, jsonPatch({
-      version: executed.version,
+      version: latest.version,
       status: 'review',
     }));
     expect(reviewRes.status).toBe(200);

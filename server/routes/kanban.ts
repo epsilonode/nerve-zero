@@ -27,6 +27,7 @@ import {
 } from '../lib/kanban-store.js';
 import { invokeGatewayTool } from '../lib/gateway-client.js';
 import { parseKanbanMarkers, stripKanbanMarkers } from '../lib/parseMarkers.js';
+import { spawnKanbanWorkerViaRpc } from '../lib/kanban-worker-spawn.js';
 import type {
   TaskStatus,
   TaskPriority,
@@ -819,41 +820,33 @@ app.post('/api/kanban/tasks/:id/execute', rateLimitGeneral, async (c) => {
 
     const task = await store.executeTask(id, parsed.data, 'operator');
 
-    // Spawn agent session via gateway (fire-and-forget)
+    // Spawn agent session via RPC helper (fire-and-forget)
     const taskDescription = task.description || task.title;
     const runSessionKey = task.run?.sessionKey;
     if (!runSessionKey) {
       throw new Error(`executeTask did not produce a run session key for task ${id}`);
     }
 
-    const spawnArgs: Record<string, unknown> = {
-      task: `You are working on a Kanban task.\n\nTitle: ${task.title}\n\nDescription: ${taskDescription}\n\nDeliver your result as a clear summary of what was done.`,
-      mode: 'run',
-      label: runSessionKey,
-    };
     // Use task's model, or board default. If neither is set, omit — OpenClaw
     // will use whatever default model the operator configured in openclaw.json.
     const config = await store.getConfig();
     const model = task.model || config.defaultModel;
-    if (model) spawnArgs.model = model;
     const thinking = task.thinking || config.defaultThinking;
-    if (thinking) spawnArgs.thinking = thinking;
 
-    invokeGatewayTool('sessions_spawn', spawnArgs)
-      .then(async (spawnRaw) => {
-        const spawn = parseGatewayResponse(spawnRaw);
-        const childSessionKey = typeof spawn.childSessionKey === 'string'
-          ? spawn.childSessionKey
-          : typeof spawn.sessionKey === 'string'
-            ? spawn.sessionKey
-            : typeof spawn.sessionId === 'string'
-              ? spawn.sessionId
-              : undefined;
-        const runId = typeof spawn.runId === 'string' ? spawn.runId : undefined;
+    spawnKanbanWorkerViaRpc({
+      label: runSessionKey,
+      task: `You are working on a Kanban task.\n\nTitle: ${task.title}\n\nDescription: ${taskDescription}\n\nDeliver your result as a clear summary of what was done.`,
+      model,
+      thinking,
+    })
+      .then(async (spawnResult) => {
+        // Normalize sessionId alias into childSessionKey for consistency
+        const childSessionKey = spawnResult.childSessionKey ?? spawnResult.sessionId;
+        const sessionId = spawnResult.sessionId ?? spawnResult.childSessionKey;
 
         const linkedTask = await store.attachRunIdentifiers(id, runSessionKey, {
           childSessionKey,
-          runId,
+          sessionId,
         });
         if (!linkedTask) {
           console.warn(`[kanban] Spawned run metadata arrived after task ${id} moved on from run ${runSessionKey}`);
@@ -865,7 +858,7 @@ app.post('/api/kanban/tasks/:id/execute', rateLimitGeneral, async (c) => {
         pollSessionCompletion(store, id, {
           correlationKey: runSessionKey,
           childSessionKey: linkedTask.run?.childSessionKey ?? childSessionKey,
-          runId: linkedTask.run?.runId ?? runId,
+          runId: linkedTask.run?.runId,
         });
       })
       .catch((err) => {
