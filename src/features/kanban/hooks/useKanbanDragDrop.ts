@@ -17,6 +17,8 @@ interface UseKanbanDragDropOptions {
   setTasksOptimistic: (updater: (prev: KanbanTask[]) => KanbanTask[]) => void;
   reorderTask: (id: string, version: number, targetStatus: TaskStatus, targetIndex: number) => Promise<KanbanTask>;
   onError?: (msg: string) => void;
+  /** Active column keys — used to distinguish column drop targets from card IDs. Defaults to COLUMNS. */
+  activeColumns?: TaskStatus[];
 }
 
 /**
@@ -28,7 +30,9 @@ export function useKanbanDragDrop({
   setTasksOptimistic,
   reorderTask,
   onError,
+  activeColumns: activeColumnsProp,
 }: UseKanbanDragDropOptions) {
+  const activeColumns = activeColumnsProp ?? COLUMNS;
   const [activeTask, setActiveTask] = useState<KanbanTask | null>(null);
 
   // Snapshot of tasks before a drag starts — used for rollback on error
@@ -48,12 +52,12 @@ export function useKanbanDragDrop({
   const findColumnForId = useCallback(
     (id: string): TaskStatus | null => {
       // Is it a column id directly?
-      if ((COLUMNS as string[]).includes(id)) return id as TaskStatus;
+      if (activeColumns.includes(id)) return id as TaskStatus;
       // Otherwise it's a task id — find its column
       const task = tasks.find((t) => t.id === id);
       return task?.status ?? null;
     },
-    [tasks],
+    [tasks, activeColumns],
   );
 
   /* ── Drag Start ── */
@@ -91,7 +95,7 @@ export function useKanbanDragDrop({
 
         // Find index to insert at: if over is a task, insert at its index; else append
         let newIndex = destTasks.length;
-        if (!(COLUMNS as string[]).includes(overId)) {
+        if (!activeColumns.includes(overId)) {
           const overIndex = destTasks.findIndex((t) => t.id === overId);
           if (overIndex >= 0) newIndex = overIndex;
         }
@@ -130,7 +134,7 @@ export function useKanbanDragDrop({
         });
       });
     },
-    [findColumnForId, setTasksOptimistic],
+    [findColumnForId, setTasksOptimistic, activeColumns],
   );
 
   /* ── Drag End (commit to API) ── */
@@ -173,7 +177,7 @@ export function useKanbanDragDrop({
         // Dropped on itself — find its current index in column
         targetIndex = columnTasks.findIndex((t) => t.id === activeId);
         if (targetIndex < 0) targetIndex = 0;
-      } else if ((COLUMNS as string[]).includes(overId)) {
+      } else if (activeColumns.includes(overId)) {
         // Dropped on empty column — append
         targetIndex = columnTasks.filter((t) => t.id !== activeId).length;
       } else {
@@ -248,7 +252,7 @@ export function useKanbanDragDrop({
         snapshotRef.current = null;
       }
     },
-    [tasks, findColumnForId, setTasksOptimistic, reorderTask, onError],
+    [tasks, findColumnForId, setTasksOptimistic, reorderTask, onError, activeColumns],
   );
 
   const onDragCancel = useCallback(() => {

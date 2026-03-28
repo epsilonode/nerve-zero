@@ -299,6 +299,30 @@ describe('POST /api/kanban/tasks', () => {
     expect(res.status).toBe(400);
   });
 
+  it('accepts a configured custom status', async () => {
+    const app = await buildApp();
+    const cfgRes = await app.request('/api/kanban/config', jsonPut({
+      columns: [
+        { key: 'backlog', title: 'Backlog', visible: true },
+        { key: 'todo', title: 'To Do', visible: true },
+        { key: 'in-progress', title: 'In Progress', visible: true },
+        { key: 'review', title: 'Review', visible: true },
+        { key: 'blocked', title: 'Blocked', visible: true },
+        { key: 'done', title: 'Done', visible: true },
+      ],
+    }));
+    expect(cfgRes.status).toBe(200);
+
+    const res = await app.request('/api/kanban/tasks', json({
+      title: 'Blocked task',
+      createdBy: 'operator',
+      status: 'blocked',
+    }));
+    expect(res.status).toBe(201);
+    const body = await res.json() as KanbanTask;
+    expect(body.status).toBe('blocked');
+  });
+
   it('returns 400 for invalid priority', async () => {
     const app = await buildApp();
     const res = await app.request('/api/kanban/tasks', json({
@@ -503,6 +527,31 @@ describe('POST /api/kanban/tasks/:id/reorder', () => {
     expect(res.status).toBe(400);
   });
 
+  it('reorders into a configured custom status', async () => {
+    const app = await buildApp();
+    const cfgRes = await app.request('/api/kanban/config', jsonPut({
+      columns: [
+        { key: 'backlog', title: 'Backlog', visible: true },
+        { key: 'todo', title: 'To Do', visible: true },
+        { key: 'in-progress', title: 'In Progress', visible: true },
+        { key: 'review', title: 'Review', visible: true },
+        { key: 'blocked', title: 'Blocked', visible: true },
+        { key: 'done', title: 'Done', visible: true },
+      ],
+    }));
+    expect(cfgRes.status).toBe(200);
+
+    const task = await createTask(app, { status: 'todo' });
+    const res = await app.request(`/api/kanban/tasks/${task.id}/reorder`, json({
+      version: task.version,
+      targetStatus: 'blocked',
+      targetIndex: 0,
+    }));
+    expect(res.status).toBe(200);
+    const body = await res.json() as KanbanTask;
+    expect(body.status).toBe('blocked');
+  });
+
   it('returns 400 for missing version', async () => {
     const app = await buildApp();
     const task = await createTask(app);
@@ -569,6 +618,35 @@ describe('PUT /api/kanban/config', () => {
     const res = await app.request('/api/kanban/config');
     const cfg = await res.json() as Record<string, unknown>;
     expect(cfg.reviewRequired).toBe(false);
+  });
+
+  it('returns 400 when config removes a status used by existing tasks', async () => {
+    const app = await buildApp();
+    const cfgRes = await app.request('/api/kanban/config', jsonPut({
+      columns: [
+        { key: 'backlog', title: 'Backlog', visible: true },
+        { key: 'todo', title: 'To Do', visible: true },
+        { key: 'in-progress', title: 'In Progress', visible: true },
+        { key: 'review', title: 'Review', visible: true },
+        { key: 'blocked', title: 'Blocked', visible: true },
+        { key: 'done', title: 'Done', visible: true },
+        { key: 'cancelled', title: 'Cancelled', visible: false },
+      ],
+    }));
+    expect(cfgRes.status).toBe(200);
+    await createTask(app, { status: 'blocked' });
+
+    const res = await app.request('/api/kanban/config', jsonPut({
+      columns: [
+        { key: 'backlog', title: 'Backlog', visible: true },
+        { key: 'todo', title: 'To Do', visible: true },
+        { key: 'in-progress', title: 'In Progress', visible: true },
+        { key: 'review', title: 'Review', visible: true },
+        { key: 'done', title: 'Done', visible: true },
+        { key: 'cancelled', title: 'Cancelled', visible: false },
+      ],
+    }));
+    expect(res.status).toBe(400);
   });
 });
 
@@ -997,6 +1075,82 @@ describe('POST /api/kanban/proposals', () => {
       proposedBy: 'agent:codex',
     }));
     expect(res.status).toBe(400);
+  });
+
+  it('returns 400 for invalid custom status on create proposal', async () => {
+    const app = await buildApp();
+    const res = await app.request('/api/kanban/proposals', json({
+      type: 'create',
+      payload: { title: 'Bad proposal', status: 'blocked' },
+      proposedBy: 'agent:codex',
+    }));
+    expect(res.status).toBe(400);
+  });
+
+  it('accepts configured custom status on create proposal', async () => {
+    const app = await buildApp();
+    const cfgRes = await app.request('/api/kanban/config', jsonPut({
+      columns: [
+        { key: 'backlog', title: 'Backlog', visible: true },
+        { key: 'todo', title: 'To Do', visible: true },
+        { key: 'in-progress', title: 'In Progress', visible: true },
+        { key: 'review', title: 'Review', visible: true },
+        { key: 'blocked', title: 'Blocked', visible: true },
+        { key: 'done', title: 'Done', visible: true },
+      ],
+    }));
+    expect(cfgRes.status).toBe(200);
+
+    const res = await app.request('/api/kanban/proposals', json({
+      type: 'create',
+      payload: { title: 'Blocked proposal', status: 'blocked' },
+      proposedBy: 'agent:codex',
+    }));
+    expect(res.status).toBe(201);
+    const body = await res.json() as { status: string; type: string };
+    expect(body.status).toBe('pending');
+    expect(body.type).toBe('create');
+  });
+
+  it('returns 400 for invalid custom status on update proposal', async () => {
+    const app = await buildApp();
+    const task = await createTask(app);
+
+    const res = await app.request('/api/kanban/proposals', json({
+      type: 'update',
+      payload: { id: task.id, status: 'blocked' },
+      proposedBy: 'agent:codex',
+    }));
+    expect(res.status).toBe(400);
+  });
+
+  it('accepts configured custom status on update proposal', async () => {
+    const app = await buildApp();
+    const cfgRes = await app.request('/api/kanban/config', jsonPut({
+      columns: [
+        { key: 'backlog', title: 'Backlog', visible: true },
+        { key: 'todo', title: 'To Do', visible: true },
+        { key: 'in-progress', title: 'In Progress', visible: true },
+        { key: 'review', title: 'Review', visible: true },
+        { key: 'blocked', title: 'Blocked', visible: true },
+        { key: 'done', title: 'Done', visible: true },
+      ],
+    }));
+    expect(cfgRes.status).toBe(200);
+    const task = await createTask(app);
+
+    const res = await app.request('/api/kanban/proposals', json({
+      type: 'update',
+      payload: { id: task.id, status: 'blocked' },
+      proposedBy: 'agent:codex',
+    }));
+    expect(res.status).toBe(201);
+    const proposal = await res.json() as { id: string };
+
+    const approveRes = await app.request(`/api/kanban/proposals/${proposal.id}/approve`, { method: 'POST' });
+    expect(approveRes.status).toBe(200);
+    const approveBody = await approveRes.json() as { task: KanbanTask };
+    expect(approveBody.task.status).toBe('blocked');
   });
 });
 
