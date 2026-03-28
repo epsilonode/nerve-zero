@@ -659,6 +659,58 @@ describe('executeTask', () => {
   });
 });
 
+describe('canonical run session key', () => {
+  it('accepts a precomputed root session key in executeTask', async () => {
+    const task = await createSampleTask({ status: 'todo' });
+    const rootSessionKey = 'kanban-root:test-task';
+    
+    const executed = await store.executeTask(task.id, { sessionKey: rootSessionKey });
+
+    expect(executed.status).toBe('in-progress');
+    expect(executed.run).toBeDefined();
+    expect(executed.run!.status).toBe('running');
+    expect(executed.run!.sessionKey).toBe(rootSessionKey);
+    expect(executed.version).toBe(task.version + 1);
+  });
+
+  it('preserves stale-run protection: old run cannot rewrite active canonical session key', async () => {
+    const task = await createSampleTask({ status: 'todo' });
+    const rootSessionKey1 = 'kanban-root:run-1';
+    const rootSessionKey2 = 'kanban-root:run-2';
+
+    // First run
+    const run1 = await store.executeTask(task.id, { sessionKey: rootSessionKey1 });
+    expect(run1.run!.sessionKey).toBe(rootSessionKey1);
+
+    // Abort and re-execute with new root session key
+    const aborted = await store.abortTask(run1.id);
+    expect(aborted.run!.status).toBe('aborted');
+
+    const run2 = await store.executeTask(aborted.id, { sessionKey: rootSessionKey2 });
+    expect(run2.run!.sessionKey).toBe(rootSessionKey2);
+    expect(run2.run!.status).toBe('running');
+
+    // Stale run completion with old session key should fail
+    await expect(
+      store.completeRun(run2.id, rootSessionKey1, 'stale result')
+    ).rejects.toThrow(InvalidTransitionError);
+
+    // Verify active run is still intact
+    const current = await store.getTask(task.id);
+    expect(current.run?.status).toBe('running');
+    expect(current.run?.sessionKey).toBe(rootSessionKey2);
+    expect(current.result).toBeUndefined();
+  });
+
+  it('still generates auto keys when no custom session key is provided', async () => {
+    const task = await createSampleTask({ status: 'todo' });
+    
+    const executed = await store.executeTask(task.id);
+
+    expect(executed.run!.sessionKey).toMatch(new RegExp(`^kb-${task.id}-\\d+`));
+  });
+});
+
 describe('attachRunIdentifiers', () => {
   it('persists stable spawned identifiers without bumping the task version', async () => {
     const task = await createSampleTask({ status: 'todo' });

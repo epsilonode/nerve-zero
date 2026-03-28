@@ -851,7 +851,7 @@ export class KanbanStore {
 
   async executeTask(
     id: string,
-    options?: { model?: string; thinking?: 'off' | 'low' | 'medium' | 'high' },
+    options?: { model?: string; thinking?: 'off' | 'low' | 'medium' | 'high'; sessionKey?: string },
     actor?: string,
   ): Promise<KanbanTask> {
     return this.withStore(async () => {
@@ -876,7 +876,7 @@ export class KanbanStore {
       }
 
       const now = Date.now();
-      const sessionKey = uniqueRunSessionKey(id, now);
+      const sessionKey = options?.sessionKey ?? uniqueRunSessionKey(id, now);
 
       task.status = 'in-progress';
       task.run = {
