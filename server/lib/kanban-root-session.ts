@@ -23,7 +23,7 @@ export interface KanbanRootSessionLaunchResult {
  * Generate a deterministic root-session key from a Kanban run label.
  * Server-side equivalent to frontend root-session key builder.
  */
-function buildKanbanRootSessionKey(label: string): string {
+export function buildKanbanRootSessionKey(label: string): string {
   // Normalize label for use in session key
   const normalized = label
     .toLowerCase()

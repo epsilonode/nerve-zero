@@ -28,7 +28,10 @@ import {
 import { invokeGatewayTool } from '../lib/gateway-client.js';
 import { withMutex } from '../lib/mutex.js';
 import { parseKanbanMarkers, stripKanbanMarkers } from '../lib/parseMarkers.js';
-import { launchKanbanRootSessionViaRpc } from '../lib/kanban-root-session.js';
+import {
+  buildKanbanRootSessionKey,
+  launchKanbanRootSessionViaRpc,
+} from '../lib/kanban-root-session.js';
 import type {
   KanbanTask,
   TaskStatus,
@@ -38,6 +41,9 @@ import type {
 } from '../lib/kanban-store.js';
 
 const app = new Hono();
+
+const POLL_SESSIONS_ACTIVE_MINUTES = 24 * 60;
+const POLL_SESSIONS_LIMIT = 200;
 
 // ── Session completion poller ────────────────────────────────────────
 
@@ -81,12 +87,20 @@ interface KanbanRunIdentity {
   runId?: string;
 }
 
+interface PendingRootSessionLaunch {
+  sessionKey: string;
+  label: string;
+  prompt: string;
+  model?: string;
+  thinking?: string;
+}
+
 type ExecuteTaskAttempt =
   | { duplicate: true }
   | {
     duplicate: false;
     task: KanbanTask;
-    launchResult?: { sessionKey: string; runId?: string };
+    launchRequest?: PendingRootSessionLaunch;
   };
 
 /** Poll root session state until run finishes, then complete the run. */
@@ -119,12 +133,15 @@ function pollSessionCompletion(
         return; // task was moved, aborted, or rerun under a newer session key
       }
 
-      // Poll sessions.list for the root session
-      const raw = await invokeGatewayTool('sessions.list', { sessionKey: identity.correlationKey });
+      // Poll sessions_list via /tools/invoke, then filter client-side by the known root session key.
+      const raw = await invokeGatewayTool('sessions_list', {
+        activeMinutes: POLL_SESSIONS_ACTIVE_MINUTES,
+        limit: POLL_SESSIONS_LIMIT,
+      });
       const parsed = parseGatewayResponse(raw);
 
       const sessions = (parsed.sessions ?? []) as Array<Record<string, unknown>>;
-      const session = sessions.find(s => s.sessionKey === identity.correlationKey);
+      const session = sessions.find((s) => (s.sessionKey ?? s.key) === identity.correlationKey);
 
       if (!session) {
         // Session not found yet -- may not have registered, keep trying
@@ -803,47 +820,27 @@ app.post('/api/kanban/tasks/:id/execute', rateLimitGeneral, async (c) => {
       const model = existing.model || parsed.data.model || config.defaultModel;
       const thinking = existing.thinking || parsed.data.thinking || config.defaultThinking;
 
-      // Generate label for the root session
       const label = `kb-${existing.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40)}-${Date.now()}`;
+      const sessionKey = buildKanbanRootSessionKey(label);
       const taskDescription = existing.description || existing.title;
+      const prompt = `You are working on a Kanban task.\n\nTitle: ${existing.title}\n\nDescription: ${taskDescription}\n\nDeliver your result as a clear summary of what was done.`;
 
-      // Launch via the new root-session helper and await the sessionKey
-      let launchResult: { sessionKey: string; runId?: string };
-      try {
-        launchResult = await launchKanbanRootSessionViaRpc({
-          label,
-          task: `You are working on a Kanban task.\n\nTitle: ${existing.title}\n\nDescription: ${taskDescription}\n\nDeliver your result as a clear summary of what was done.`,
-          model,
-          thinking,
-        });
-      } catch (err: unknown) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        console.error(`[kanban] Failed to launch root session for task ${id}:`, err);
-        // Generate a temporary sessionKey for the failed run
-        const failedSessionKey = `kb-failed-${Date.now()}`;
-        await store.executeTask(
-          id,
-          { ...parsed.data, sessionKey: failedSessionKey },
-          'operator',
-        );
-        const failedTask = await store.completeRun(id, failedSessionKey, undefined, `Spawn failed: ${errorMessage}`);
-        return {
-          duplicate: false,
-          task: failedTask,
-        } as const;
-      }
-
-      // Call executeTask with the root sessionKey from the helper
       const task = await store.executeTask(
         id,
-        { ...parsed.data, sessionKey: launchResult.sessionKey },
+        { ...parsed.data, sessionKey },
         'operator',
       );
 
       return {
         duplicate: false,
         task,
-        launchResult,
+        launchRequest: {
+          sessionKey,
+          label,
+          prompt,
+          model,
+          thinking,
+        },
       } as const;
     });
 
@@ -851,24 +848,50 @@ app.post('/api/kanban/tasks/:id/execute', rateLimitGeneral, async (c) => {
       return c.json({ error: 'duplicate_execution', details: 'Task is already being executed' }, 409);
     }
 
-    // Fire-and-forget: attach runId if returned, then poll for completion
-    if (execution.launchResult) {
-      (async () => {
+    if (execution.launchRequest) {
+      void (async () => {
+        let launchResult: { sessionKey: string; runId?: string };
         try {
-          if (execution.launchResult.runId) {
-            await store.attachRunIdentifiers(id, execution.launchResult.sessionKey, {
-              runId: execution.launchResult.runId,
+          launchResult = await launchKanbanRootSessionViaRpc({
+            label: execution.launchRequest.label,
+            task: execution.launchRequest.prompt,
+            model: execution.launchRequest.model,
+            thinking: execution.launchRequest.thinking,
+          });
+
+          if (launchResult.sessionKey !== execution.launchRequest.sessionKey) {
+            throw new Error(
+              `Root session key mismatch, expected ${execution.launchRequest.sessionKey}, got ${launchResult.sessionKey}`,
+            );
+          }
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          console.error(`[kanban] Failed to launch root session for task ${id}:`, err);
+          await store.completeRun(
+            id,
+            execution.launchRequest.sessionKey,
+            undefined,
+            `Spawn failed: ${errorMessage}`,
+          ).catch((completeErr) => {
+            console.warn(`[kanban] Failed to mark spawn failure for task ${id}:`, completeErr);
+          });
+          return;
+        }
+
+        try {
+          if (launchResult.runId) {
+            await store.attachRunIdentifiers(id, execution.launchRequest.sessionKey, {
+              runId: launchResult.runId,
             });
           }
-
-          // Poll for session completion in the background
-          pollSessionCompletion(store, id, {
-            correlationKey: execution.launchResult.sessionKey,
-            runId: execution.launchResult.runId,
-          });
         } catch (err) {
           console.error(`[kanban] Failed to attach run metadata for task ${id}:`, err);
         }
+
+        pollSessionCompletion(store, id, {
+          correlationKey: execution.launchRequest.sessionKey,
+          runId: launchResult.runId,
+        });
       })();
     }
 
