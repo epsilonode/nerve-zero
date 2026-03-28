@@ -698,9 +698,14 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
   });
 
   it('returns task immediately as in-progress without waiting for child discovery', async () => {
+    let resolveSpawn: (() => void) | undefined;
+    const spawnFinished = new Promise<void>((resolve) => {
+      resolveSpawn = resolve;
+    });
+
     vi.doMock('../lib/kanban-worker-spawn.js', () => ({
       spawnKanbanWorkerViaRpc: vi.fn(async () => {
-        await new Promise(resolve => setTimeout(resolve, 10_000)); // Long delay
+        await spawnFinished;
         return { parentSessionKey: 'agent:main:main' };
       }),
     }));
@@ -713,9 +718,12 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
     const elapsed = Date.now() - start;
 
     expect(res.status).toBe(200);
-    expect(elapsed).toBeLessThan(1000); // Should return immediately, not wait 10s
+    expect(elapsed).toBeLessThan(1000);
     const body = await res.json() as KanbanTask;
     expect(body.status).toBe('in-progress');
+
+    resolveSpawn?.();
+    await new Promise(resolve => setTimeout(resolve, 25));
   });
 
   it('persists discovered childSessionKey from helper', async () => {
@@ -1799,6 +1807,76 @@ describe('POST /api/kanban/tasks/:id/complete — run key integrity', () => {
     expect(completed?.run?.childSessionKey).toBe(childSessionKey);
     expect(completed?.run?.sessionId).toBe(childSessionKey);
     expect(completed?.result).toContain('Done via sessionId alias');
+  });
+
+  it('falls back to label correlation when spawn discovery returns no child session key', async () => {
+    const gatewaySessionKey = 'agent:main:subagent:label-only-child';
+
+    vi.doMock('../lib/kanban-worker-spawn.js', () => ({
+      spawnKanbanWorkerViaRpc: vi.fn(async () => {
+        await new Promise(resolve => setTimeout(resolve, 10));
+        return {
+          parentSessionKey: 'agent:main:main',
+        };
+      }),
+    }));
+
+    const invokeGatewayToolMock = vi.fn(async (tool: string) => {
+      if (tool === 'subagents') {
+        return {
+          active: [],
+          recent: [{
+            label: runningTaskKey,
+            status: 'done',
+            sessionKey: gatewaySessionKey,
+          }],
+        };
+      }
+      if (tool === 'sessions_history') {
+        return {
+          messages: [
+            {
+              role: 'assistant',
+              content: 'Done via label correlation fallback',
+            },
+          ],
+        };
+      }
+      return {};
+    });
+
+    const app = await buildApp({ invokeGatewayToolMock });
+    const task = await createTask(app, { status: 'todo' });
+
+    let runningTaskKey = '';
+    const execRes = await app.request(`/api/kanban/tasks/${task.id}/execute`, json({}));
+    expect(execRes.status).toBe(200);
+    const running = await execRes.json() as KanbanTask;
+    expect(running.status).toBe('in-progress');
+    runningTaskKey = running.run!.sessionKey;
+
+    const immediateTasksRes = await app.request('/api/kanban/tasks');
+    const immediateTasks = await immediateTasksRes.json() as { items: KanbanTask[] };
+    const immediate = immediateTasks.items.find((item) => item.id === task.id);
+    expect(immediate?.run?.childSessionKey).toBeUndefined();
+    expect(immediate?.run?.sessionId).toBeUndefined();
+
+    await new Promise((resolve) => setTimeout(resolve, 3_200));
+
+    expect(invokeGatewayToolMock).toHaveBeenCalledWith('sessions_history', {
+      sessionKey: gatewaySessionKey,
+      limit: 3,
+    });
+
+    const tasksRes = await app.request('/api/kanban/tasks');
+    const tasks = await tasksRes.json() as { items: KanbanTask[] };
+    const completed = tasks.items.find((item) => item.id === task.id);
+    expect(completed?.status).toBe('review');
+    expect(completed?.run?.status).toBe('done');
+    expect(completed?.run?.sessionKey).toBe(running.run?.sessionKey);
+    expect(completed?.run?.childSessionKey).toBeUndefined();
+    expect(completed?.run?.sessionId).toBeUndefined();
+    expect(completed?.result).toContain('Done via label correlation fallback');
   });
 
   it('ignores late stale poller completion from run 1 after run 2 is active', async () => {
