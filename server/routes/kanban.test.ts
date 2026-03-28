@@ -708,28 +708,85 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
 
     const res = await app.request(`/api/kanban/tasks/${task.id}/execute`, json({}));
     expect(res.status).toBe(200);
+    const body = await res.json() as KanbanTask;
 
     expect(rootHelperCalled).toBe(true);
     expect(oldSpawnCalled).toBe(false);
+    // Verify the returned task has the root session key
+    expect(body.run?.sessionKey).toBe('kanban-root:test-task');
   });
 
-  it.skip('returns task immediately as in-progress, run.sessionKey is the root session key', async () => {
-    // SKIP: First test already proves helper is called. Session key format is verified by
-    // the fact that executeTask receives launchResult.sessionKey from the helper.
-    // The implementation correctly uses the root session key returned by the helper.
+  it('returns task with run.sessionKey matching the root session key from helper', async () => {
+    const expectedSessionKey = 'kanban-root:custom-session-abc123';
+
+    vi.doMock('../lib/kanban-root-session.js', () => ({
+      launchKanbanRootSessionViaRpc: vi.fn(async () => ({
+        sessionKey: expectedSessionKey,
+        runId: undefined,
+      })),
+    }));
+
+    const app = await buildApp();
+    const task = await createTask(app, { status: 'todo', title: 'Root session key test' });
+
+    const res = await app.request(`/api/kanban/tasks/${task.id}/execute`, json({}));
+    expect(res.status).toBe(200);
+    const body = await res.json() as KanbanTask;
+
+    expect(body.status).toBe('in-progress');
+    expect(body.run).toBeDefined();
+    expect(body.run!.sessionKey).toBe(expectedSessionKey);
   });
 
-  it.skip('attaches runId when helper returns it', async () => {
-    // SKIP: Cannot properly mock after module is imported by route.
-    // The implementation correctly attaches runId when returned by helper.
-    // This is verified by code inspection and the route implementation.
+  it('attaches runId when helper returns it', async () => {
+    const expectedRunId = 'run-xyz-789';
+
+    vi.doMock('../lib/kanban-root-session.js', () => ({
+      launchKanbanRootSessionViaRpc: vi.fn(async () => ({
+        sessionKey: 'kanban-root:with-runid',
+        runId: expectedRunId,
+      })),
+    }));
+
+    const app = await buildApp();
+    const task = await createTask(app, { status: 'todo', title: 'RunId attachment test' });
+
+    const res = await app.request(`/api/kanban/tasks/${task.id}/execute`, json({}));
+    expect(res.status).toBe(200);
+    
+    // Wait for fire-and-forget to attach runId
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // Refetch task to verify runId was attached
+    const refetchRes = await app.request(`/api/kanban/tasks/${task.id}`);
+    const latest = await refetchRes.json() as KanbanTask;
+
+    expect(latest.run).toBeDefined();
+    expect(latest.run!.runId).toBe(expectedRunId);
   });
 
-  it.skip('handles helper rejection by failing the run back to todo with Spawn failed error', async () => {
-    // SKIP: Cannot properly mock after module is imported by route.
-    // The implementation correctly handles rejections with try/catch and calls
-    // store.executeTask + store.completeRun with "Spawn failed: ..." error message.
-    // This is verified by code inspection.
+  it('handles helper rejection by failing the run back to todo with Spawn failed error', async () => {
+    const errorMessage = 'RPC connection timeout';
+
+    vi.doMock('../lib/kanban-root-session.js', () => ({
+      launchKanbanRootSessionViaRpc: vi.fn(async () => {
+        throw new Error(errorMessage);
+      }),
+    }));
+
+    const app = await buildApp();
+    const task = await createTask(app, { status: 'todo', title: 'Helper rejection test' });
+
+    const res = await app.request(`/api/kanban/tasks/${task.id}/execute`, json({}));
+    expect(res.status).toBe(200);
+    const body = await res.json() as KanbanTask;
+
+    // Task should be back to todo with error run
+    expect(body.status).toBe('todo');
+    expect(body.run).toBeDefined();
+    expect(body.run!.status).toBe('error');
+    expect(body.run!.error).toContain('Spawn failed:');
+    expect(body.run!.error).toContain(errorMessage);
   });
 
   it('executes a todo task', async () => {

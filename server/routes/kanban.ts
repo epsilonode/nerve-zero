@@ -810,13 +810,13 @@ app.post('/api/kanban/tasks/:id/execute', rateLimitGeneral, async (c) => {
       console.error(`[kanban] Failed to launch root session for task ${id}:`, err);
       // Generate a temporary sessionKey for the failed run
       const failedSessionKey = `kb-failed-${Date.now()}`;
-      const task = await store.executeTask(
+      await store.executeTask(
         id,
         { ...parsed.data, sessionKey: failedSessionKey },
         'operator',
       );
-      await store.completeRun(id, failedSessionKey, undefined, `Spawn failed: ${errorMessage}`);
-      return c.json(task);
+      const failedTask = await store.completeRun(id, failedSessionKey, undefined, `Spawn failed: ${errorMessage}`);
+      return c.json(failedTask);
     }
 
     // Call executeTask with the root sessionKey from the helper
