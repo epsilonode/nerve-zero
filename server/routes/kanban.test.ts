@@ -679,9 +679,8 @@ describe('PUT /api/kanban/config', () => {
 // ── POST /api/kanban/tasks/:id/execute ───────────────────────────────
 
 describe('POST /api/kanban/tasks/:id/execute', () => {
-  it('launches via new root-session helper, not old kanban-worker-spawn', async () => {
+  it('launches via the root-session helper', async () => {
     let rootHelperCalled = false;
-    let oldSpawnCalled = false;
     let helperLabel = '';
 
     vi.doMock('../lib/kanban-root-session.js', () => ({
@@ -696,16 +695,6 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
       }),
     }));
 
-    vi.doMock('../lib/kanban-worker-spawn.js', () => ({
-      spawnKanbanWorkerViaRpc: vi.fn(async () => {
-        oldSpawnCalled = true;
-        return {
-          parentSessionKey: 'agent:main:main',
-          childSessionKey: 'agent:main:subagent:test',
-        };
-      }),
-    }));
-
     const app = await buildApp();
     const task = await createTask(app, { status: 'todo' });
 
@@ -714,7 +703,6 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
     const body = await res.json() as KanbanTask;
 
     expect(rootHelperCalled).toBe(true);
-    expect(oldSpawnCalled).toBe(false);
     expect(body.run?.sessionKey).toBe(`kanban-root:${helperLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}`);
   });
 
@@ -763,7 +751,10 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
       return response;
     });
 
-    await new Promise(resolve => setTimeout(resolve, 20));
+    const deadline = Date.now() + 250;
+    while (!settled && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
     expect(settled).toBe(true);
 
     const res = await responsePromise;

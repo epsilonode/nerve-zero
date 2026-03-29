@@ -10,12 +10,11 @@ import * as gatewayRpc from './gateway-rpc.js';
 // ── Test setup ───────────────────────────────────────────────────────
 
 describe('launchKanbanRootSessionViaRpc', () => {
-  let gatewayRpcCallSpy: ReturnType<typeof vi.spyOn>;
   let calls: Array<{ method: string; params: Record<string, unknown> }>;
 
   beforeEach(() => {
     calls = [];
-    gatewayRpcCallSpy = vi.spyOn(gatewayRpc, 'gatewayRpcCall').mockImplementation(async (method, params) => {
+    vi.spyOn(gatewayRpc, 'gatewayRpcCall').mockImplementation(async (method, params) => {
       calls.push({ method, params });
       
       // Mock responses

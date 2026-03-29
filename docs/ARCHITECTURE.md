@@ -564,25 +564,30 @@ This prevents stale overwrites from concurrent editors (drag-and-drop, API clien
 
 ```
 1. POST /api/kanban/tasks/:id/execute
-   +-- store.executeTask()    -> status = in-progress, run.status = running
-   +-- spawnKanbanWorkerViaRpc({ label: runSessionKey, ... })
-       +-- gatewayRpcCall('chat.send', { sessionKey: <top-level-root>, message: '[spawn-subagent]...' })
-       +-- poll gatewayRpcCall('sessions.list') for the new child session
-       +-- attach discovered childSessionKey/sessionId when available
-       +-- fire-and-forget from the HTTP handler
+   +-- withMutex(`kanban-execute:${id}`) prevents double-launch races
+   +-- store.executeTask(..., { sessionKey }) -> status = in-progress, run.status = running
+   +-- fire-and-forget launchKanbanRootSessionViaRpc({ label, task, model, thinking })
+       +-- gatewayRpcCall('sessions.patch', { sessionKey, model?, thinking? })
+       +-- gatewayRpcCall('chat.send', { sessionKey, message, deliver:false, idempotencyKey })
+       +-- attach returned runId when available
+       +-- start pollSessionCompletion(taskId, { correlationKey: sessionKey, runId? })
+       +-- on launch failure: store.completeRun(taskId, sessionKey, undefined, 'Spawn failed: ...')
 
-2. pollSessionCompletion()    -> polls gateway subagents every 5s (max 720 attempts / 60 min)
-   +-- invokeGatewayTool('subagents', { action: 'list' })
-   +-- prefer stable childSessionKey / runId matches
-   +-- fall back to the human-readable run label when discovery did not return stable ids
-   +-- if status=done:
+2. pollSessionCompletion()    -> polls gateway sessions_list every 5s (max 720 attempts / 60 min)
+   +-- invokeGatewayTool('sessions_list', { activeMinutes: 1440, limit: 200 })
+   +-- match the dedicated root session by exact sessionKey equality
+   +-- if session not found yet:
+       +-- schedule next poll
+   +-- if session is idle and not busy/processing:
        |   fetch session history (last 3 messages)
        |   parseKanbanMarkers(resultText) -> create proposals
        |   stripKanbanMarkers(resultText) -> clean result
-       +-- store.completeRun(taskId, cleanResult)
+       +-- store.completeRun(taskId, sessionKey, cleanResult)
    +-- if status=error/failed:
-       +-- store.completeRun(taskId, undefined, errorMsg)
-   +-- if status=running:
+       +-- store.completeRun(taskId, sessionKey, undefined, errorMsg)
+   +-- if task/run no longer matches the active session key:
+       +-- stop polling as stale
+   +-- otherwise:
        +-- schedule next poll
 
 3. store.completeRun()
@@ -590,7 +595,7 @@ This prevents stale overwrites from concurrent editors (drag-and-drop, API clien
    +-- error   -> run.status = error, task.status = todo
 ```
 
-The model cascade is: task's `model` -> board config `defaultModel` -> `anthropic/claude-sonnet-4-5`.
+The model cascade is: task `model` -> execute request `model` -> board config `defaultModel` -> OpenClaw's configured default model. Thinking follows the same cascade with `defaultThinking`.
 
 ### Marker Parsing
 

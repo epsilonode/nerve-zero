@@ -84,6 +84,7 @@ export function cleanupKanbanPollers(): void {
 
 interface KanbanRunIdentity {
   correlationKey: string;
+  // Metadata from chat.send for traceability, not for session matching.
   runId?: string;
 }
 
@@ -100,7 +101,7 @@ type ExecuteTaskAttempt =
   | {
     duplicate: false;
     task: KanbanTask;
-    launchRequest?: PendingRootSessionLaunch;
+    launchRequest: PendingRootSessionLaunch;
   };
 
 /** Poll root session state until run finishes, then complete the run. */
@@ -848,52 +849,52 @@ app.post('/api/kanban/tasks/:id/execute', rateLimitGeneral, async (c) => {
       return c.json({ error: 'duplicate_execution', details: 'Task is already being executed' }, 409);
     }
 
-    if (execution.launchRequest) {
-      void (async () => {
-        let launchResult: { sessionKey: string; runId?: string };
-        try {
-          launchResult = await launchKanbanRootSessionViaRpc({
-            label: execution.launchRequest.label,
-            task: execution.launchRequest.prompt,
-            model: execution.launchRequest.model,
-            thinking: execution.launchRequest.thinking,
-          });
+    const { launchRequest } = execution;
 
-          if (launchResult.sessionKey !== execution.launchRequest.sessionKey) {
-            throw new Error(
-              `Root session key mismatch, expected ${execution.launchRequest.sessionKey}, got ${launchResult.sessionKey}`,
-            );
-          }
-        } catch (err) {
-          const errorMessage = err instanceof Error ? err.message : String(err);
-          console.error(`[kanban] Failed to launch root session for task ${id}:`, err);
-          await store.completeRun(
-            id,
-            execution.launchRequest.sessionKey,
-            undefined,
-            `Spawn failed: ${errorMessage}`,
-          ).catch((completeErr) => {
-            console.warn(`[kanban] Failed to mark spawn failure for task ${id}:`, completeErr);
-          });
-          return;
-        }
-
-        try {
-          if (launchResult.runId) {
-            await store.attachRunIdentifiers(id, execution.launchRequest.sessionKey, {
-              runId: launchResult.runId,
-            });
-          }
-        } catch (err) {
-          console.error(`[kanban] Failed to attach run metadata for task ${id}:`, err);
-        }
-
-        pollSessionCompletion(store, id, {
-          correlationKey: execution.launchRequest.sessionKey,
-          runId: launchResult.runId,
+    void (async () => {
+      let launchResult: { sessionKey: string; runId?: string };
+      try {
+        launchResult = await launchKanbanRootSessionViaRpc({
+          label: launchRequest.label,
+          task: launchRequest.prompt,
+          model: launchRequest.model,
+          thinking: launchRequest.thinking,
         });
-      })();
-    }
+
+        if (launchResult.sessionKey !== launchRequest.sessionKey) {
+          throw new Error(
+            `Root session key mismatch, expected ${launchRequest.sessionKey}, got ${launchResult.sessionKey}`,
+          );
+        }
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        console.error(`[kanban] Failed to launch root session for task ${id}:`, err);
+        await store.completeRun(
+          id,
+          launchRequest.sessionKey,
+          undefined,
+          `Spawn failed: ${errorMessage}`,
+        ).catch((completeErr) => {
+          console.warn(`[kanban] Failed to mark spawn failure for task ${id}:`, completeErr);
+        });
+        return;
+      }
+
+      try {
+        if (launchResult.runId) {
+          await store.attachRunIdentifiers(id, launchRequest.sessionKey, {
+            runId: launchResult.runId,
+          });
+        }
+      } catch (err) {
+        console.error(`[kanban] Failed to attach run metadata for task ${id}:`, err);
+      }
+
+      pollSessionCompletion(store, id, {
+        correlationKey: launchRequest.sessionKey,
+        runId: launchResult.runId,
+      });
+    })();
 
     return c.json(execution.task);
   } catch (err) {
