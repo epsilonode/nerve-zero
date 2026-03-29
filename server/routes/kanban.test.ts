@@ -9,6 +9,7 @@ import type { KanbanTask } from '../lib/kanban-store.js';
 let tmpDir: string;
 
 type GatewayToolMock = (tool: string, args?: Record<string, unknown>) => Promise<unknown>;
+type GatewayRpcMock = (method: string, params?: Record<string, unknown>) => Promise<unknown>;
 
 function buildMockRootSessionKey(label: string): string {
   const normalized = label
@@ -25,8 +26,16 @@ beforeEach(async () => {
   // Default mock for the new root-session helper (tests can override with vi.doMock before buildApp)
   vi.doMock('../lib/kanban-root-session.js', () => ({
     buildKanbanRootSessionKey: buildMockRootSessionKey,
-    launchKanbanRootSessionViaRpc: vi.fn(async ({ label }: { label: string }) => ({
+    resolveKanbanParentSessionKey: vi.fn((assignee?: string) => {
+      if (!assignee || assignee === 'operator') return null;
+      const match = assignee.match(/^agent:([^:]+)/);
+      if (!match || match[1] === 'main') return null;
+      return `agent:${match[1]}:main`;
+    }),
+    launchKanbanRootSessionViaRpc: vi.fn(async ({ label, parentSessionKey }: { label: string; parentSessionKey: string }) => ({
       sessionKey: buildMockRootSessionKey(label),
+      parentSessionKey,
+      knownSessionKeysBefore: [parentSessionKey],
       runId: undefined,
     })),
   }));
@@ -41,6 +50,7 @@ afterEach(async () => {
   }
   vi.useRealTimers();
   vi.restoreAllMocks();
+  delete process.env.NERVE_KANBAN_EXECUTION_MODE;
   await new Promise(resolve => setTimeout(resolve, 50));
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
@@ -53,18 +63,30 @@ afterEach(async () => {
   }
 });
 
-async function buildApp(options: { invokeGatewayToolMock?: GatewayToolMock } = {}): Promise<Hono> {
+async function buildApp(options: { invokeGatewayToolMock?: GatewayToolMock; gatewayRpcMock?: GatewayRpcMock; executionMode?: 'primary' | 'fallback' } = {}): Promise<Hono> {
   // Mock rate-limit to be a no-op for tests
   vi.doMock('../middleware/rate-limit.js', () => ({
     rateLimitGeneral: vi.fn((_c: unknown, next: () => Promise<void>) => next()),
   }));
 
+  process.env.NERVE_KANBAN_EXECUTION_MODE = options.executionMode ?? 'primary';
+
   const invokeGatewayToolMock = options.invokeGatewayToolMock
     ?? (vi.fn(() => Promise.resolve({})) as GatewayToolMock);
+  const gatewayRpcMock = options.gatewayRpcMock
+    ?? (vi.fn(async (method: string) => {
+      if (method === 'sessions.list') {
+        return { sessions: [{ sessionKey: 'agent:reviewer:main' }] };
+      }
+      return {};
+    }) as GatewayRpcMock);
 
   // Mock gateway client so fire-and-forget spawn doesn't interfere with test cleanup
   vi.doMock('../lib/gateway-client.js', () => ({
     invokeGatewayTool: invokeGatewayToolMock,
+  }));
+  vi.doMock('../lib/gateway-rpc.js', () => ({
+    gatewayRpcCall: gatewayRpcMock,
   }));
 
   // Create store from the re-imported module so instanceof checks work
@@ -502,8 +524,8 @@ describe('POST /api/kanban/tasks/:id/reorder', () => {
   });
 
   it('moves task to a different column', async () => {
-    const app = await buildApp();
-    const task = await createTask(app, { status: 'todo' });
+    const app = await buildApp({ executionMode: 'fallback' });
+    const task = await createTask(app, { status: 'todo', assignee: 'agent:reviewer' });
 
     const res = await app.request(`/api/kanban/tasks/${task.id}/reorder`, json({
       version: task.version,
@@ -679,24 +701,27 @@ describe('PUT /api/kanban/config', () => {
 // ── POST /api/kanban/tasks/:id/execute ───────────────────────────────
 
 describe('POST /api/kanban/tasks/:id/execute', () => {
-  it('launches via the root-session helper', async () => {
+  it('launches via the macOS fallback helper', async () => {
     let rootHelperCalled = false;
     let helperLabel = '';
 
     vi.doMock('../lib/kanban-root-session.js', () => ({
       buildKanbanRootSessionKey: buildMockRootSessionKey,
-      launchKanbanRootSessionViaRpc: vi.fn(async ({ label }: { label: string }) => {
+      resolveKanbanParentSessionKey: vi.fn(() => 'agent:reviewer:main'),
+      launchKanbanRootSessionViaRpc: vi.fn(async ({ label, parentSessionKey }: { label: string; parentSessionKey: string }) => {
         rootHelperCalled = true;
         helperLabel = label;
         return {
           sessionKey: buildMockRootSessionKey(label),
+          parentSessionKey,
+          knownSessionKeysBefore: [parentSessionKey],
           runId: 'run-123',
         };
       }),
     }));
 
-    const app = await buildApp();
-    const task = await createTask(app, { status: 'todo' });
+    const app = await buildApp({ executionMode: 'fallback' });
+    const task = await createTask(app, { status: 'todo', assignee: 'agent:reviewer' });
 
     const res = await app.request(`/api/kanban/tasks/${task.id}/execute`, json({}));
     expect(res.status).toBe(200);
@@ -706,22 +731,25 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
     expect(body.run?.sessionKey).toBe(`kanban-root:${helperLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}`);
   });
 
-  it('stores the deterministic root session key before background launch completes', async () => {
+  it('stores the deterministic run correlation key before macOS fallback launch completes', async () => {
     let helperLabel = '';
 
     vi.doMock('../lib/kanban-root-session.js', () => ({
       buildKanbanRootSessionKey: buildMockRootSessionKey,
-      launchKanbanRootSessionViaRpc: vi.fn(async ({ label }: { label: string }) => {
+      resolveKanbanParentSessionKey: vi.fn(() => 'agent:reviewer:main'),
+      launchKanbanRootSessionViaRpc: vi.fn(async ({ label, parentSessionKey }: { label: string; parentSessionKey: string }) => {
         helperLabel = label;
         return {
           sessionKey: buildMockRootSessionKey(label),
+          parentSessionKey,
+          knownSessionKeysBefore: [parentSessionKey],
           runId: undefined,
         };
       }),
     }));
 
-    const app = await buildApp();
-    const task = await createTask(app, { status: 'todo', title: 'Root session key test' });
+    const app = await buildApp({ executionMode: 'fallback' });
+    const task = await createTask(app, { status: 'todo', title: 'Root session key test', assignee: 'agent:reviewer' });
 
     const res = await app.request(`/api/kanban/tasks/${task.id}/execute`, json({}));
     expect(res.status).toBe(200);
@@ -732,18 +760,19 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
     expect(body.run!.sessionKey).toBe(`kanban-root:${helperLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}`);
   });
 
-  it('returns in-progress immediately while root session launch continues in the background', async () => {
-    let resolveLaunch: ((value: { sessionKey: string; runId?: string }) => void) | undefined;
+  it('returns in-progress immediately while macOS fallback launch continues in the background', async () => {
+    let resolveLaunch: ((value: { sessionKey: string; parentSessionKey: string; knownSessionKeysBefore: string[]; runId?: string }) => void) | undefined;
 
     vi.doMock('../lib/kanban-root-session.js', () => ({
       buildKanbanRootSessionKey: buildMockRootSessionKey,
+      resolveKanbanParentSessionKey: vi.fn(() => 'agent:reviewer:main'),
       launchKanbanRootSessionViaRpc: vi.fn(() => new Promise((resolve) => {
         resolveLaunch = resolve;
       })),
     }));
 
-    const app = await buildApp();
-    const task = await createTask(app, { status: 'todo', title: 'Slow launch test' });
+    const app = await buildApp({ executionMode: 'fallback' });
+    const task = await createTask(app, { status: 'todo', title: 'Slow launch test', assignee: 'agent:reviewer' });
 
     let settled = false;
     const responsePromise = app.request(`/api/kanban/tasks/${task.id}/execute`, json({})).then((response) => {
@@ -764,23 +793,26 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
     expect(body.run?.status).toBe('running');
     expect(body.run?.sessionKey).toBeTruthy();
 
-    resolveLaunch?.({ sessionKey: body.run!.sessionKey });
+    resolveLaunch?.({ sessionKey: body.run!.sessionKey, parentSessionKey: 'agent:reviewer:main', knownSessionKeysBefore: ['agent:reviewer:main'] });
     await new Promise(resolve => setTimeout(resolve, 20));
   });
 
-  it('attaches runId when helper returns it', async () => {
+  it('attaches runId when macOS fallback helper returns it', async () => {
     const expectedRunId = 'run-xyz-789';
 
     vi.doMock('../lib/kanban-root-session.js', () => ({
       buildKanbanRootSessionKey: buildMockRootSessionKey,
-      launchKanbanRootSessionViaRpc: vi.fn(async ({ label }: { label: string }) => ({
+      resolveKanbanParentSessionKey: vi.fn(() => 'agent:reviewer:main'),
+      launchKanbanRootSessionViaRpc: vi.fn(async ({ label, parentSessionKey }: { label: string; parentSessionKey: string }) => ({
         sessionKey: buildMockRootSessionKey(label),
+        parentSessionKey,
+        knownSessionKeysBefore: [parentSessionKey],
         runId: expectedRunId,
       })),
     }));
 
-    const app = await buildApp();
-    const task = await createTask(app, { status: 'todo', title: 'RunId attachment test' });
+    const app = await buildApp({ executionMode: 'fallback' });
+    const task = await createTask(app, { status: 'todo', title: 'RunId attachment test', assignee: 'agent:reviewer' });
 
     const res = await app.request(`/api/kanban/tasks/${task.id}/execute`, json({}));
     expect(res.status).toBe(200);
@@ -796,19 +828,20 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
     expect(latest.run!.runId).toBe(expectedRunId);
   });
 
-  it('marks the run back to todo with Spawn failed error after background launch rejection', async () => {
+  it('marks the run back to todo with Spawn failed error after macOS fallback launch rejection', async () => {
     const errorMessage = 'RPC connection timeout';
     let rejectLaunch: ((reason?: unknown) => void) | undefined;
 
     vi.doMock('../lib/kanban-root-session.js', () => ({
       buildKanbanRootSessionKey: buildMockRootSessionKey,
+      resolveKanbanParentSessionKey: vi.fn(() => 'agent:reviewer:main'),
       launchKanbanRootSessionViaRpc: vi.fn(() => new Promise((_, reject) => {
         rejectLaunch = reject;
       })),
     }));
 
-    const app = await buildApp();
-    const task = await createTask(app, { status: 'todo', title: 'Helper rejection test' });
+    const app = await buildApp({ executionMode: 'fallback' });
+    const task = await createTask(app, { status: 'todo', title: 'Helper rejection test', assignee: 'agent:reviewer' });
 
     const res = await app.request(`/api/kanban/tasks/${task.id}/execute`, json({}));
     expect(res.status).toBe(200);
@@ -878,27 +911,32 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
     expect(body.thinking).toBe('high');
   });
 
-  it('keeps stored execution settings aligned with the launched root session', async () => {
+  it('keeps stored execution settings aligned with the macOS fallback launch', async () => {
     let launchArgs: { model?: string; thinking?: string } | undefined;
 
     vi.doMock('../lib/kanban-root-session.js', () => ({
       buildKanbanRootSessionKey: buildMockRootSessionKey,
-      launchKanbanRootSessionViaRpc: vi.fn(async ({ label, model, thinking }: {
+      resolveKanbanParentSessionKey: vi.fn(() => 'agent:reviewer:main'),
+      launchKanbanRootSessionViaRpc: vi.fn(async ({ label, parentSessionKey, model, thinking }: {
         label: string;
+        parentSessionKey: string;
         model?: string;
         thinking?: string;
       }) => {
         launchArgs = { model, thinking };
         return {
           sessionKey: buildMockRootSessionKey(label),
+          parentSessionKey,
+          knownSessionKeysBefore: [parentSessionKey],
           runId: 'run-123',
         };
       }),
     }));
 
-    const app = await buildApp();
+    const app = await buildApp({ executionMode: 'fallback' });
     const task = await createTask(app, {
       status: 'todo',
+      assignee: 'agent:reviewer',
       model: 'task-model',
       thinking: 'low',
     });
@@ -926,11 +964,11 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
     expect(res2.status).toBe(409);
   });
 
-  it('uses a fresh root session key when the same task is rerun under the same clock tick', async () => {
+  it('uses a fresh run correlation key when the same macOS fallback task is rerun under the same clock tick', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(1_716_710_400_000);
 
-    const app = await buildApp();
-    const task = await createTask(app, { status: 'todo', title: 'Same title' });
+    const app = await buildApp({ executionMode: 'fallback' });
+    const task = await createTask(app, { status: 'todo', title: 'Same title', assignee: 'agent:reviewer' });
 
     const run1Res = await app.request(`/api/kanban/tasks/${task.id}/execute`, json({}));
     expect(run1Res.status).toBe(200);
@@ -947,8 +985,8 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
     expect(run2.run?.sessionKey).not.toBe(run1.run?.sessionKey);
   });
 
-  it('prevents race condition: concurrent execute calls launch only one root session', async () => {
-    const launchMock = vi.fn(async ({ label }: { label: string }) => {
+  it('prevents race condition: concurrent execute calls launch only one macOS fallback session', async () => {
+    const launchMock = vi.fn(async ({ label, parentSessionKey }: { label: string; parentSessionKey: string }) => {
       // Simulate realistic launch delay
       await new Promise(resolve => setTimeout(resolve, 50));
       const normalized = label
@@ -957,17 +995,20 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
         .replace(/^-+|-+$/g, '');
       return {
         sessionKey: `kanban-root:${normalized}`,
+        parentSessionKey,
+        knownSessionKeysBefore: [parentSessionKey],
         runId: undefined,
       };
     });
 
     vi.doMock('../lib/kanban-root-session.js', () => ({
       buildKanbanRootSessionKey: buildMockRootSessionKey,
+      resolveKanbanParentSessionKey: vi.fn(() => 'agent:reviewer:main'),
       launchKanbanRootSessionViaRpc: launchMock,
     }));
 
-    const app = await buildApp();
-    const task = await createTask(app, { status: 'todo' });
+    const app = await buildApp({ executionMode: 'fallback' });
+    const task = await createTask(app, { status: 'todo', assignee: 'agent:reviewer' });
 
     // Fire two concurrent execute requests
     const [res1, res2] = await Promise.all([
@@ -1767,13 +1808,15 @@ describe('POST /api/kanban/tasks/:id/complete — run key integrity', () => {
     expect(latest?.result).toBeUndefined();
   });
 
-  it('polls root session with the sessions_list tool contract and completes when session is done', async () => {
-    let rootSessionKey = '';
+  it('polls the spawned child session via gateway RPC and completes when session reports done status', async () => {
+    let runKey = '';
+    const childSessionKey = 'agent:reviewer:subagent:test-child';
 
-    const invokeGatewayToolMock = vi.fn(async (tool: string) => {
-      if (tool === 'sessions_list') {
+    const gatewayRpcMock = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'sessions.list') {
         return {
           sessions: [
+            { sessionKey: 'agent:reviewer:main' },
             {
               sessionKey: 'other-session',
               agentState: 'busy',
@@ -1781,20 +1824,20 @@ describe('POST /api/kanban/tasks/:id/complete — run key integrity', () => {
               processing: true,
             },
             {
-              sessionKey: rootSessionKey,
-              agentState: 'idle',
-              busy: false,
-              processing: false,
+              sessionKey: childSessionKey,
+              label: 'kb-test-task-test-task-v2-123',
+              status: 'done',
             },
           ].filter((session) => session.sessionKey),
         };
       }
-      if (tool === 'sessions_history') {
+      if (method === 'sessions.get') {
+        expect(params?.key).toBe(childSessionKey);
         return {
           messages: [
             {
               role: 'assistant',
-              content: 'Done\n[kanban:create]{"title":"proposal from root session"}[/kanban:create]',
+              content: 'Done\n[kanban:create]{"title":"proposal from child session"}[/kanban:create]',
             },
           ],
         };
@@ -1802,29 +1845,32 @@ describe('POST /api/kanban/tasks/:id/complete — run key integrity', () => {
       return {};
     });
 
-    const app = await buildApp({ invokeGatewayToolMock });
-    const task = await createTask(app, { status: 'todo', title: 'Test task' });
+    vi.spyOn(Date, 'now').mockReturnValue(123);
+
+    const app = await buildApp({ gatewayRpcMock, executionMode: 'fallback' });
+    const task = await createTask(app, { status: 'todo', title: 'Test task', assignee: 'agent:reviewer' });
 
     const execRes = await app.request(`/api/kanban/tasks/${task.id}/execute`, json({}));
     expect(execRes.status).toBe(200);
     const running = await execRes.json() as KanbanTask;
-    rootSessionKey = running.run!.sessionKey;
+    runKey = running.run!.sessionKey;
 
-    expect(rootSessionKey).toBeTruthy();
+    expect(runKey).toBeTruthy();
 
     // Wait for poller to detect completion
     await new Promise((resolve) => setTimeout(resolve, 3_200));
 
-    const sessionListCalls = (invokeGatewayToolMock as ReturnType<typeof vi.fn>).mock.calls.filter(
-      (call) => call[0] === 'sessions_list'
+    const sessionListCalls = (gatewayRpcMock as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call) => call[0] === 'sessions.list'
     );
     expect(sessionListCalls.length).toBeGreaterThan(0);
-    expect(sessionListCalls).toContainEqual(['sessions_list', { activeMinutes: 24 * 60, limit: 200 }]);
+    expect(sessionListCalls).toContainEqual(['sessions.list', { activeMinutes: 24 * 60, limit: 200 }]);
     expect(sessionListCalls.every(([, args]) => args && !('sessionKey' in args))).toBe(true);
 
-    expect(invokeGatewayToolMock).toHaveBeenCalledWith('sessions_history', {
-      sessionKey: rootSessionKey,
+    expect(gatewayRpcMock).toHaveBeenCalledWith('sessions.get', {
+      key: childSessionKey,
       limit: 3,
+      includeTools: true,
     });
 
     const tasksRes = await app.request('/api/kanban/tasks');
@@ -1832,23 +1878,27 @@ describe('POST /api/kanban/tasks/:id/complete — run key integrity', () => {
     const completed = tasks.items.find((item) => item.id === task.id);
     expect(completed?.status).toBe('review');
     expect(completed?.run?.status).toBe('done');
-    expect(completed?.run?.sessionKey).toBe(rootSessionKey);
+    expect(completed?.run?.sessionKey).toBe(runKey);
+    expect(completed?.run?.childSessionKey).toBe(childSessionKey);
     expect(completed?.result).toContain('Done');
 
     const proposalsRes = await app.request('/api/kanban/proposals');
     const proposals = await proposalsRes.json() as { proposals: Array<{ payload: Record<string, unknown> }> };
-    expect(proposals.proposals.find((proposal) => proposal.payload.title === 'proposal from root session')).toBeDefined();
+    expect(proposals.proposals.find((proposal) => proposal.payload.title === 'proposal from child session')).toBeDefined();
   });
 
-  it('treats terminal failed sessions as errors even when they are idle', async () => {
-    let rootSessionKey = '';
+  it('treats terminal failed child sessions as errors even when they are idle', async () => {
+    let runKey = '';
+    const childSessionKey = 'agent:reviewer:subagent:failed-child';
 
-    const invokeGatewayToolMock = vi.fn(async (tool: string) => {
-      if (tool === 'sessions_list') {
+    const gatewayRpcMock = vi.fn(async (method: string) => {
+      if (method === 'sessions.list') {
         return {
           sessions: [
+            { sessionKey: 'agent:reviewer:main' },
             {
-              sessionKey: rootSessionKey,
+              sessionKey: childSessionKey,
+              label: 'kb-failed-task-failed-task-v2-456',
               status: 'failed',
               error: 'Worker crashed',
               agentState: 'idle',
@@ -1858,7 +1908,7 @@ describe('POST /api/kanban/tasks/:id/complete — run key integrity', () => {
           ].filter((session) => session.sessionKey),
         };
       }
-      if (tool === 'sessions_history') {
+      if (method === 'sessions.get') {
         return {
           messages: [
             {
@@ -1871,19 +1921,22 @@ describe('POST /api/kanban/tasks/:id/complete — run key integrity', () => {
       return {};
     });
 
-    const app = await buildApp({ invokeGatewayToolMock });
-    const task = await createTask(app, { status: 'todo', title: 'Failed task' });
+    vi.spyOn(Date, 'now').mockReturnValue(456);
+
+    const app = await buildApp({ gatewayRpcMock, executionMode: 'fallback' });
+    const task = await createTask(app, { status: 'todo', title: 'Failed task', assignee: 'agent:reviewer' });
 
     const execRes = await app.request(`/api/kanban/tasks/${task.id}/execute`, json({}));
     expect(execRes.status).toBe(200);
     const running = await execRes.json() as KanbanTask;
-    rootSessionKey = running.run!.sessionKey;
+    runKey = running.run!.sessionKey;
 
     await new Promise((resolve) => setTimeout(resolve, 3_200));
 
-    expect(invokeGatewayToolMock).not.toHaveBeenCalledWith('sessions_history', {
-      sessionKey: rootSessionKey,
+    expect(gatewayRpcMock).not.toHaveBeenCalledWith('sessions.get', {
+      key: childSessionKey,
       limit: 3,
+      includeTools: true,
     });
 
     const tasksRes = await app.request('/api/kanban/tasks');
@@ -1891,26 +1944,29 @@ describe('POST /api/kanban/tasks/:id/complete — run key integrity', () => {
     const failed = tasks.items.find((item) => item.id === task.id);
     expect(failed?.status).toBe('todo');
     expect(failed?.run?.status).toBe('error');
+    expect(failed?.run?.sessionKey).toBe(runKey);
+    expect(failed?.run?.childSessionKey).toBe(childSessionKey);
     expect(failed?.run?.error).toBe('Worker crashed');
   });
 
   it('ignores late stale poller completion from run 1 after run 2 is active', async () => {
     vi.useFakeTimers();
 
-    const runState: { run1SessionKey?: string; run2SessionKey?: string } = {};
+    const runState: { run1SessionKey?: string; run2SessionKey?: string; run1Label?: string; run2Label?: string } = {};
 
-    const invokeGatewayToolMock: GatewayToolMock = vi.fn(async (tool) => {
-      if (tool === 'sessions_list') {
+    const gatewayRpcMock: GatewayRpcMock = vi.fn(async (method, params) => {
+      if (method === 'sessions.list') {
         return {
           sessions: [
+            { sessionKey: 'agent:reviewer:main' },
             runState.run1SessionKey && {
               sessionKey: runState.run1SessionKey,
-              agentState: 'idle',
-              busy: false,
-              processing: false,
+              label: runState.run1Label,
+              status: 'done',
             },
             runState.run2SessionKey && {
               sessionKey: runState.run2SessionKey,
+              label: runState.run2Label,
               agentState: 'busy',
               busy: true,
               processing: true,
@@ -1918,7 +1974,7 @@ describe('POST /api/kanban/tasks/:id/complete — run key integrity', () => {
           ].filter(Boolean),
         };
       }
-      if (tool === 'sessions_history') {
+      if (method === 'sessions.get') {
         return {
           messages: [
             {
@@ -1931,13 +1987,14 @@ describe('POST /api/kanban/tasks/:id/complete — run key integrity', () => {
       return {};
     });
 
-    const app = await buildApp({ invokeGatewayToolMock });
-    const created = await createTask(app, { status: 'todo' });
+    const app = await buildApp({ gatewayRpcMock, executionMode: 'fallback' });
+    const created = await createTask(app, { status: 'todo', assignee: 'agent:reviewer' });
 
     const run1Res = await app.request(`/api/kanban/tasks/${created.id}/execute`, json({}));
     expect(run1Res.status).toBe(200);
     const run1 = await run1Res.json() as KanbanTask;
-    runState.run1SessionKey = run1.run!.sessionKey;
+    runState.run1SessionKey = 'agent:reviewer:subagent:run-1';
+    runState.run1Label = String(run1.run!.sessionKey).replace(/^kanban-root:/, '');
 
     const abortRes = await app.request(`/api/kanban/tasks/${created.id}/abort`, json({ note: 'rerun' }));
     expect(abortRes.status).toBe(200);
@@ -1947,7 +2004,8 @@ describe('POST /api/kanban/tasks/:id/complete — run key integrity', () => {
     const run2Res = await app.request(`/api/kanban/tasks/${created.id}/execute`, json({}));
     expect(run2Res.status).toBe(200);
     const run2 = await run2Res.json() as KanbanTask;
-    runState.run2SessionKey = run2.run!.sessionKey;
+    runState.run2SessionKey = 'agent:reviewer:subagent:run-2';
+    runState.run2Label = String(run2.run!.sessionKey).replace(/^kanban-root:/, '');
 
     await vi.advanceTimersByTimeAsync(3_000);
 

@@ -660,7 +660,7 @@ describe('executeTask', () => {
 });
 
 describe('canonical run session key', () => {
-  it('accepts a precomputed root session key in executeTask', async () => {
+  it('accepts a precomputed run correlation key in executeTask', async () => {
     const task = await createSampleTask({ status: 'todo' });
     const rootSessionKey = 'kanban-root:test-task';
     

@@ -1,8 +1,12 @@
 /**
- * Server-side root-session launch helper for Kanban execution.
+ * Server-side Kanban subagent launch helper.
  *
- * Replacement for the architecturally-broken child-session workaround.
- * Uses the frontend-proven pattern: sessions.patch + chat.send(deliver:false).
+ * Kanban tasks should run as subagents under an existing top-level agent root,
+ * not as new top-level sessions. This mirrors the frontend spawn-subagent flow:
+ *
+ * 1. List sessions to confirm the parent root exists and snapshot existing children
+ * 2. chat.send a [spawn-subagent] message into the parent root session
+ * 3. Return run metadata so the caller can poll for the spawned child session
  *
  * @module
  */
@@ -10,84 +14,116 @@
 import { randomUUID } from 'node:crypto';
 import { gatewayRpcCall } from './gateway-rpc.js';
 
-// ── Types ────────────────────────────────────────────────────────────
+const SESSIONS_ACTIVE_MINUTES = 24 * 60;
+const SESSIONS_LIMIT = 200;
+
+interface GatewaySessionSummary {
+  key?: string;
+  sessionKey?: string;
+}
 
 export interface KanbanRootSessionLaunchResult {
+  /** Deterministic correlation key stored on the task run link. */
   sessionKey: string;
+  /** Existing top-level agent root that owns the spawned child. */
+  parentSessionKey: string;
+  /** Snapshot of known session keys before spawn, used to discover the new child. */
+  knownSessionKeysBefore: string[];
+  /** Optional runId returned by chat.send. */
   runId?: string;
 }
 
-// ── Session key builder ─────────────────────────────────────────────
-
 /**
- * Generate a deterministic root-session key from a Kanban run label.
- * Server-side equivalent to frontend root-session key builder.
+ * Generate a deterministic Kanban run correlation key from a launch label.
+ *
+ * Historical note: the run link field is still named `sessionKey`, but for
+ * Kanban execution this value is only a stable run correlation key. The real
+ * spawned child session key is attached later as `childSessionKey`.
  */
 export function buildKanbanRootSessionKey(label: string): string {
-  // Normalize label for use in session key
   const normalized = label
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
-  
+
   return `kanban-root:${normalized}`;
 }
 
-// ── Main launch helper ──────────────────────────────────────────────
+/** Resolve the owning top-level worker root session for a task assignee. */
+export function resolveKanbanParentSessionKey(assignee?: string): string | null {
+  if (!assignee || assignee === 'operator') return null;
+  const match = assignee.match(/^agent:([^:]+)/);
+  if (!match) return null;
+  if (match[1] === 'main') return null;
+  return `agent:${match[1]}:main`;
+}
+
+function getSessionKey(session: GatewaySessionSummary): string | null {
+  if (typeof session.sessionKey === 'string' && session.sessionKey.trim()) return session.sessionKey;
+  if (typeof session.key === 'string' && session.key.trim()) return session.key;
+  return null;
+}
+
+function buildSpawnSubagentMessage(params: {
+  task: string;
+  label: string;
+  model?: string;
+  thinking?: string;
+}): string {
+  const lines = ['[spawn-subagent]'];
+  lines.push(`task: ${params.task}`);
+  lines.push(`label: ${params.label}`);
+  if (params.model) lines.push(`model: ${params.model}`);
+  if (params.thinking && params.thinking !== 'off') lines.push(`thinking: ${params.thinking}`);
+  lines.push('mode: run');
+  lines.push('cleanup: keep');
+  return lines.join('\n');
+}
 
 /**
- * Launch a Kanban task in a dedicated top-level root session.
- *
- * Uses the frontend-proven pattern:
- * 1. sessions.patch to create/configure the root session
- * 2. chat.send with deliver:false to execute without leaking to main chat
- *
- * @param params - Kanban task launch parameters
- * @returns Session key and optional run ID from chat.send
+ * Launch a Kanban task as a subagent under an existing top-level agent root.
  */
 export async function launchKanbanRootSessionViaRpc(params: {
   label: string;
   task: string;
+  parentSessionKey: string;
   model?: string;
   thinking?: string;
 }): Promise<KanbanRootSessionLaunchResult> {
-  // 1. Generate deterministic session key from label
   const sessionKey = buildKanbanRootSessionKey(params.label);
 
-  // 2. Build sessions.patch params
-  const patchParams: Record<string, unknown> = {
-    sessionKey,
-  };
+  const sessionsResponse = await gatewayRpcCall('sessions.list', {
+    activeMinutes: SESSIONS_ACTIVE_MINUTES,
+    limit: SESSIONS_LIMIT,
+  }) as { sessions?: GatewaySessionSummary[] };
 
-  // Include model and thinking only if provided
-  if (params.model) {
-    patchParams.model = params.model;
+  const sessions = Array.isArray(sessionsResponse.sessions) ? sessionsResponse.sessions : [];
+  const knownSessionKeysBefore = sessions
+    .map(getSessionKey)
+    .filter((value): value is string => typeof value === 'string');
+
+  if (!knownSessionKeysBefore.includes(params.parentSessionKey)) {
+    throw new Error(`Parent agent session not found: ${params.parentSessionKey}`);
   }
-  if (params.thinking) {
-    patchParams.thinking = params.thinking;
-  }
 
-  // 3. Call sessions.patch to create/configure the root session
-  await gatewayRpcCall('sessions.patch', patchParams);
+  const idempotencyKey = `kanban-subagent-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  const message = buildSpawnSubagentMessage({
+    task: params.task,
+    label: params.label,
+    model: params.model,
+    thinking: params.thinking,
+  });
 
-  // 4. Build chat.send params with idempotency key
-  const idempotencyKey = `kanban-root-${Date.now()}-${randomUUID().slice(0, 8)}`;
-  
-  const chatSendParams: Record<string, unknown> = {
-    sessionKey,
-    message: params.task,
-    deliver: false,
+  const chatSendResponse = await gatewayRpcCall('chat.send', {
+    sessionKey: params.parentSessionKey,
+    message,
     idempotencyKey,
-  };
+  }) as { runId?: string };
 
-  // 5. Call chat.send with deliver:false
-  const chatSendResponse = await gatewayRpcCall('chat.send', chatSendParams) as {
-    runId?: string;
-  };
-
-  // 6. Return session key and runId
   return {
     sessionKey,
+    parentSessionKey: params.parentSessionKey,
+    knownSessionKeysBefore,
     runId: chatSendResponse.runId,
   };
 }
