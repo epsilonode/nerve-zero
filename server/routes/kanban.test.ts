@@ -1954,7 +1954,7 @@ describe('POST /api/kanban/tasks/:id/complete — run key integrity', () => {
 
     const runState: { run1SessionKey?: string; run2SessionKey?: string; run1Label?: string; run2Label?: string } = {};
 
-    const gatewayRpcMock: GatewayRpcMock = vi.fn(async (method, params) => {
+    const gatewayRpcMock: GatewayRpcMock = vi.fn(async (method) => {
       if (method === 'sessions.list') {
         return {
           sessions: [
