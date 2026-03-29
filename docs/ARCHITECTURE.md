@@ -566,16 +566,26 @@ This prevents stale overwrites from concurrent editors (drag-and-drop, API clien
 1. POST /api/kanban/tasks/:id/execute
    +-- withMutex(`kanban-execute:${id}`) prevents double-launch races
    +-- store.executeTask(..., { sessionKey }) -> status = in-progress, run.status = running
-   +-- fire-and-forget launchKanbanRootSessionViaRpc({ label, task, model, thinking })
-       +-- gatewayRpcCall('sessions.patch', { sessionKey, model?, thinking? })
-       +-- gatewayRpcCall('chat.send', { sessionKey, message, deliver:false, idempotencyKey })
-       +-- attach returned runId when available
-       +-- start pollSessionCompletion(taskId, { correlationKey: sessionKey, runId? })
-       +-- on launch failure: store.completeRun(taskId, sessionKey, undefined, 'Spawn failed: ...')
+   +-- Primary path (Linux / existing master behavior):
+   |    +-- invokeGatewayTool('sessions_spawn', { task, mode:'run', label: runSessionKey, model?, thinking? })
+   |    +-- attach childSessionKey / runId when available
+   |    +-- start pollSessionCompletion(taskId, { correlationKey: runSessionKey, childSessionKey?, runId? })
+   |
+   +-- macOS fallback path (intentional platform compromise):
+   |    +-- resolve assignee root -> agent:<assignee>:main
+   |    +-- gatewayRpcCall('sessions.list', ...) to confirm the parent root exists
+   |    +-- launchKanbanFallbackSubagentViaRpc({ label, task, parentSessionKey, model?, thinking? })
+   |         +-- gatewayRpcCall('chat.send', { sessionKey: parentSessionKey, message:'[spawn-subagent]...', idempotencyKey })
+   |         +-- attach returned runId when available
+   |         +-- start pollFallbackSessionCompletion(taskId, { correlationKey, parentSessionKey, expectedChildLabel, knownSessionKeysBefore, runId? })
+   |
+   +-- on launch failure: store.completeRun(taskId, sessionKey, undefined, 'Spawn failed: ...')
 
-2. pollSessionCompletion()    -> polls gateway sessions_list every 5s (max 720 attempts / 60 min)
-   +-- invokeGatewayTool('sessions_list', { activeMinutes: 1440, limit: 200 })
-   +-- match the dedicated root session by exact sessionKey equality
+2. pollSessionCompletion() / pollFallbackSessionCompletion()
+   +-- primary path polls gateway subagents for the run correlation key / runId
+   +-- macOS fallback polls direct gateway RPC sessions.list every 5s (max 720 attempts / 60 min)
+   +-- macOS fallback matches the spawned child beneath the assignee root and attaches childSessionKey
+   +-- both paths complete the task when the child reports terminal success/failure
    +-- if session not found yet:
        +-- schedule next poll
    +-- if session is idle and not busy/processing:

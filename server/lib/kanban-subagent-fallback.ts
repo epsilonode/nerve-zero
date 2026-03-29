@@ -22,7 +22,7 @@ interface GatewaySessionSummary {
   sessionKey?: string;
 }
 
-export interface KanbanRootSessionLaunchResult {
+export interface KanbanFallbackLaunchResult {
   /** Deterministic correlation key stored on the task run link. */
   sessionKey: string;
   /** Existing top-level agent root that owns the spawned child. */
@@ -40,7 +40,7 @@ export interface KanbanRootSessionLaunchResult {
  * Kanban execution this value is only a stable run correlation key. The real
  * spawned child session key is attached later as `childSessionKey`.
  */
-export function buildKanbanRootSessionKey(label: string): string {
+export function buildKanbanFallbackRunKey(label: string): string {
   const normalized = label
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -50,7 +50,7 @@ export function buildKanbanRootSessionKey(label: string): string {
 }
 
 /** Resolve the owning top-level worker root session for a task assignee. */
-export function resolveKanbanParentSessionKey(assignee?: string): string | null {
+export function resolveKanbanFallbackParentSessionKey(assignee?: string): string | null {
   if (!assignee || assignee === 'operator') return null;
   const match = assignee.match(/^agent:([^:]+)/);
   if (!match) return null;
@@ -83,14 +83,14 @@ function buildSpawnSubagentMessage(params: {
 /**
  * Launch a Kanban task as a subagent under an existing top-level agent root.
  */
-export async function launchKanbanRootSessionViaRpc(params: {
+export async function launchKanbanFallbackSubagentViaRpc(params: {
   label: string;
   task: string;
   parentSessionKey: string;
   model?: string;
   thinking?: string;
-}): Promise<KanbanRootSessionLaunchResult> {
-  const sessionKey = buildKanbanRootSessionKey(params.label);
+}): Promise<KanbanFallbackLaunchResult> {
+  const sessionKey = buildKanbanFallbackRunKey(params.label);
 
   const sessionsResponse = await gatewayRpcCall('sessions.list', {
     activeMinutes: SESSIONS_ACTIVE_MINUTES,

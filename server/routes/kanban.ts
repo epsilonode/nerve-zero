@@ -30,10 +30,10 @@ import { gatewayRpcCall } from '../lib/gateway-rpc.js';
 import { withMutex } from '../lib/mutex.js';
 import { parseKanbanMarkers, stripKanbanMarkers } from '../lib/parseMarkers.js';
 import {
-  buildKanbanRootSessionKey,
-  launchKanbanRootSessionViaRpc,
-  resolveKanbanParentSessionKey,
-} from '../lib/kanban-root-session.js';
+  buildKanbanFallbackRunKey,
+  launchKanbanFallbackSubagentViaRpc,
+  resolveKanbanFallbackParentSessionKey,
+} from '../lib/kanban-subagent-fallback.js';
 import type {
   KanbanTask,
   TaskStatus,
@@ -141,6 +141,12 @@ class KanbanExecutionPreflightError extends Error {
   }
 }
 
+/**
+ * Intentional platform compromise:
+ * - Linux keeps the original master/session-spawn path as primary because it already works there.
+ * - macOS defaults to the assignee-root fallback path because the primary subagent spawn flow is known to fail there.
+ * Tests can override this with NERVE_KANBAN_EXECUTION_MODE.
+ */
 function shouldUseKanbanFallback(): boolean {
   const mode = process.env.NERVE_KANBAN_EXECUTION_MODE;
   if (mode === 'primary') return false;
@@ -1070,7 +1076,7 @@ Deliver your result as a clear summary of what was done.`,
         } as const;
       }
 
-      const parentSessionKey = resolveKanbanParentSessionKey(existing.assignee);
+      const parentSessionKey = resolveKanbanFallbackParentSessionKey(existing.assignee);
       if (!parentSessionKey) {
         throw new KanbanExecutionPreflightError('Kanban automation on macOS requires assigning the task to a live worker agent root (not @main).');
       }
@@ -1091,7 +1097,7 @@ Deliver your result as a clear summary of what was done.`,
       const persistedThinking = existing.thinking || parsed.data.thinking;
       const titleSlug = existing.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'task';
       const label = `kb-${titleSlug}-${existing.id}-v${existing.version + 1}-${Date.now()}`;
-      const sessionKey = buildKanbanRootSessionKey(label);
+      const sessionKey = buildKanbanFallbackRunKey(label);
       const taskDescription = existing.description || existing.title;
       const prompt = `You are working on a Kanban task.
 
@@ -1187,7 +1193,7 @@ Deliver your result as a clear summary of what was done.`;
         runId?: string;
       };
       try {
-        launchResult = await launchKanbanRootSessionViaRpc({
+        launchResult = await launchKanbanFallbackSubagentViaRpc({
           label: fallbackLaunch.label,
           task: fallbackLaunch.prompt,
           parentSessionKey: fallbackLaunch.parentSessionKey,

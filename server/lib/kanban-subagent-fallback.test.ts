@@ -5,13 +5,13 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
-  buildKanbanRootSessionKey,
-  launchKanbanRootSessionViaRpc,
-  resolveKanbanParentSessionKey,
-} from './kanban-root-session.js';
+  buildKanbanFallbackRunKey,
+  launchKanbanFallbackSubagentViaRpc,
+  resolveKanbanFallbackParentSessionKey,
+} from './kanban-subagent-fallback.js';
 import * as gatewayRpc from './gateway-rpc.js';
 
-describe('launchKanbanRootSessionViaRpc', () => {
+describe('launchKanbanFallbackSubagentViaRpc', () => {
   let calls: Array<{ method: string; params: Record<string, unknown> }>;
 
   beforeEach(() => {
@@ -40,7 +40,7 @@ describe('launchKanbanRootSessionViaRpc', () => {
   });
 
   it('calls sessions.list before chat.send', async () => {
-    await launchKanbanRootSessionViaRpc({
+    await launchKanbanFallbackSubagentViaRpc({
       label: 'test-kanban-run',
       task: 'Execute kanban task',
       parentSessionKey: 'agent:reviewer:main',
@@ -63,7 +63,7 @@ describe('launchKanbanRootSessionViaRpc', () => {
       return {};
     });
 
-    await expect(launchKanbanRootSessionViaRpc({
+    await expect(launchKanbanFallbackSubagentViaRpc({
       label: 'test-kanban-run',
       task: 'Execute kanban task',
       parentSessionKey: 'agent:reviewer:main',
@@ -74,7 +74,7 @@ describe('launchKanbanRootSessionViaRpc', () => {
   });
 
   it('sends the spawn request to the parent root session', async () => {
-    await launchKanbanRootSessionViaRpc({
+    await launchKanbanFallbackSubagentViaRpc({
       label: 'test-kanban-run',
       task: 'Execute kanban task',
       parentSessionKey: 'agent:reviewer:main',
@@ -86,7 +86,7 @@ describe('launchKanbanRootSessionViaRpc', () => {
   });
 
   it('encodes a spawn-subagent message with label, model, and thinking', async () => {
-    await launchKanbanRootSessionViaRpc({
+    await launchKanbanFallbackSubagentViaRpc({
       label: 'test-kanban-run',
       task: 'Execute kanban task',
       parentSessionKey: 'agent:reviewer:main',
@@ -109,7 +109,7 @@ describe('launchKanbanRootSessionViaRpc', () => {
   });
 
   it('returns the deterministic run correlation key and runId', async () => {
-    const result = await launchKanbanRootSessionViaRpc({
+    const result = await launchKanbanFallbackSubagentViaRpc({
       label: 'test-kanban-run',
       task: 'Execute kanban task',
       parentSessionKey: 'agent:reviewer:main',
@@ -120,7 +120,7 @@ describe('launchKanbanRootSessionViaRpc', () => {
   });
 
   it('returns the known session keys snapshot captured before spawn', async () => {
-    const result = await launchKanbanRootSessionViaRpc({
+    const result = await launchKanbanFallbackSubagentViaRpc({
       label: 'test-kanban-run',
       task: 'Execute kanban task',
       parentSessionKey: 'agent:reviewer:main',
@@ -134,7 +134,7 @@ describe('launchKanbanRootSessionViaRpc', () => {
   });
 
   it('generates an idempotency key for chat.send', async () => {
-    await launchKanbanRootSessionViaRpc({
+    await launchKanbanFallbackSubagentViaRpc({
       label: 'test-kanban-run',
       task: 'Execute kanban task',
       parentSessionKey: 'agent:reviewer:main',
@@ -147,24 +147,24 @@ describe('launchKanbanRootSessionViaRpc', () => {
   });
 });
 
-describe('buildKanbanRootSessionKey', () => {
+describe('buildKanbanFallbackRunKey', () => {
   it('returns a deterministic run correlation key derived from label', () => {
-    expect(buildKanbanRootSessionKey('test-kanban-run')).toBe('kanban-root:test-kanban-run');
+    expect(buildKanbanFallbackRunKey('test-kanban-run')).toBe('kanban-root:test-kanban-run');
   });
 });
 
-describe('resolveKanbanParentSessionKey', () => {
+describe('resolveKanbanFallbackParentSessionKey', () => {
   it('maps an assignee agent id to its top-level root session', () => {
-    expect(resolveKanbanParentSessionKey('agent:reviewer')).toBe('agent:reviewer:main');
+    expect(resolveKanbanFallbackParentSessionKey('agent:reviewer')).toBe('agent:reviewer:main');
   });
 
   it('normalizes full agent-flavored values back to the owning top-level root', () => {
-    expect(resolveKanbanParentSessionKey('agent:reviewer:subagent:child')).toBe('agent:reviewer:main');
+    expect(resolveKanbanFallbackParentSessionKey('agent:reviewer:subagent:child')).toBe('agent:reviewer:main');
   });
 
   it('rejects operator, unset, and @main assignees for macOS fallback execution', () => {
-    expect(resolveKanbanParentSessionKey('operator')).toBeNull();
-    expect(resolveKanbanParentSessionKey(undefined)).toBeNull();
-    expect(resolveKanbanParentSessionKey('agent:main')).toBeNull();
+    expect(resolveKanbanFallbackParentSessionKey('operator')).toBeNull();
+    expect(resolveKanbanFallbackParentSessionKey(undefined)).toBeNull();
+    expect(resolveKanbanFallbackParentSessionKey('agent:main')).toBeNull();
   });
 });
