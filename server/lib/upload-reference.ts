@@ -135,11 +135,16 @@ export async function importExternalUploadToCanonicalReference(params: {
   mimeType?: string;
   bytes: Uint8Array;
 }): Promise<CanonicalUploadReference> {
+  const workspaceRoot = path.resolve(getWorkspaceRoot());
   const rootDir = getUploadStagingDir();
   const targetDir = path.join(rootDir, buildStagedSubdir());
-  await fs.mkdir(targetDir, { recursive: true });
-
   const stagedPath = path.join(targetDir, buildStagedFileName(params.originalName));
+
+  if (!isWithinDir(stagedPath, workspaceRoot)) {
+    throw new Error('Resolved attachment path is outside the workspace root.');
+  }
+
+  await fs.mkdir(targetDir, { recursive: true });
   await fs.writeFile(stagedPath, params.bytes);
 
   return buildCanonicalReference({

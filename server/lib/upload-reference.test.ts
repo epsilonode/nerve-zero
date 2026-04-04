@@ -71,7 +71,8 @@ describe('upload-reference helpers', () => {
 
   it('rejects imported staging output when the configured staging root escapes the workspace', async () => {
     const { homeDir } = await makeHomeWorkspace();
-    process.env.NERVE_UPLOAD_STAGING_TEMP_DIR = path.join(homeDir, 'outside-stage');
+    const outsideStageRoot = path.join(homeDir, 'outside-stage');
+    process.env.NERVE_UPLOAD_STAGING_TEMP_DIR = outsideStageRoot;
     const { importExternalUploadToCanonicalReference } = await importHelpers();
 
     await expect(importExternalUploadToCanonicalReference({
@@ -79,5 +80,7 @@ describe('upload-reference helpers', () => {
       mimeType: 'text/plain',
       bytes: new TextEncoder().encode('hello import'),
     })).rejects.toThrow('Resolved attachment path is outside the workspace root.');
+
+    await expect(fs.stat(outsideStageRoot)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });
