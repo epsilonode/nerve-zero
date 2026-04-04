@@ -53,6 +53,7 @@ function createDeferred<T>() {
 }
 
 const mockOnOpenFile = vi.fn();
+const mockOnAddToChat = vi.fn();
 const mockOnRemapOpenPaths = vi.fn();
 const mockOnCloseOpenPaths = vi.fn();
 
@@ -190,6 +191,50 @@ describe('FileTreePanel', () => {
       );
 
       expect(screen.getByText('/var/www/project')).toBeInTheDocument();
+    });
+  });
+
+  describe('context menu add to chat', () => {
+    it('shows "Add to chat" for files and calls the callback', async () => {
+      render(
+        <FileTreePanel
+          onOpenFile={mockOnOpenFile}
+          onAddToChat={mockOnAddToChat}
+          onRemapOpenPaths={mockOnRemapOpenPaths}
+          onCloseOpenPaths={mockOnCloseOpenPaths}
+          collapsed={false}
+        />
+      );
+
+      fireEvent.contextMenu(screen.getByText('package.json'), new MouseEvent('contextmenu', { bubbles: true }));
+
+      await waitFor(() => {
+        expect(screen.getByText('Add to chat')).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText('Add to chat'));
+
+      await waitFor(() => {
+        expect(mockOnAddToChat).toHaveBeenCalledWith('package.json', 'file');
+      });
+    });
+
+    it('does not show "Add to chat" for directories', async () => {
+      render(
+        <FileTreePanel
+          onOpenFile={mockOnOpenFile}
+          onAddToChat={mockOnAddToChat}
+          onRemapOpenPaths={mockOnRemapOpenPaths}
+          onCloseOpenPaths={mockOnCloseOpenPaths}
+          collapsed={false}
+        />
+      );
+
+      fireEvent.contextMenu(screen.getByText('src'), new MouseEvent('contextmenu', { bubbles: true }));
+
+      await waitFor(() => {
+        expect(screen.queryByText('Add to chat')).not.toBeInTheDocument();
+      });
     });
   });
 
