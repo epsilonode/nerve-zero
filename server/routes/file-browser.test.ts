@@ -112,6 +112,28 @@ describe('file-browser routes', () => {
       expect(json).toEqual({ ok: true, path: 'docs', type: 'directory', binary: false });
     });
 
+    it('resolves current-document-relative file links safely within the workspace', async () => {
+      await fs.mkdir(path.join(tmpDir, 'docs', 'guide'), { recursive: true });
+      await fs.writeFile(path.join(tmpDir, 'docs', 'guide', 'advanced.md'), '# Advanced');
+      const app = await buildApp();
+
+      const res = await app.request('/api/files/resolve?path=advanced.md&relativeTo=docs/guide/index.md');
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as { ok: boolean; path: string; type: string; binary: boolean };
+      expect(json).toEqual({ ok: true, path: 'docs/guide/advanced.md', type: 'file', binary: false });
+    });
+
+    it('supports workspace-root links from markdown docs via a leading slash', async () => {
+      await fs.mkdir(path.join(tmpDir, 'docs'), { recursive: true });
+      await fs.writeFile(path.join(tmpDir, 'docs', 'todo.md'), '# Todo');
+      const app = await buildApp();
+
+      const res = await app.request('/api/files/resolve?path=/docs/todo.md&relativeTo=notes/index.md');
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as { ok: boolean; path: string; type: string; binary: boolean };
+      expect(json).toEqual({ ok: true, path: 'docs/todo.md', type: 'file', binary: false });
+    });
+
     it('returns 404 for safe missing targets inside the workspace root', async () => {
       const app = await buildApp();
       const res = await app.request('/api/files/resolve?path=missing-note.md');
@@ -121,6 +143,12 @@ describe('file-browser routes', () => {
     it('returns 403 for invalid or excluded targets', async () => {
       const app = await buildApp();
       const res = await app.request('/api/files/resolve?path=../../etc');
+      expect(res.status).toBe(403);
+    });
+
+    it('returns 403 when a current-document-relative link escapes the workspace', async () => {
+      const app = await buildApp();
+      const res = await app.request('/api/files/resolve?path=../../../etc/passwd&relativeTo=docs/guide/index.md');
       expect(res.status).toBe(403);
     });
   });

@@ -75,7 +75,37 @@ describe('MarkdownRenderer', () => {
 
     fireEvent.click(screen.getByRole('link', { name: 'notes' }));
 
-    expect(onOpenWorkspacePath).toHaveBeenCalledWith('docs/todo.md');
+    expect(onOpenWorkspacePath).toHaveBeenCalledWith('docs/todo.md', undefined);
+  });
+
+  it('passes the current document path for markdown-document-relative links', () => {
+    const onOpenWorkspacePath = vi.fn();
+    render(
+      <MarkdownRenderer
+        content="[advanced](../advanced.md)"
+        currentDocumentPath="docs/guide/index.md"
+        onOpenWorkspacePath={onOpenWorkspacePath}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('link', { name: 'advanced' }));
+
+    expect(onOpenWorkspacePath).toHaveBeenCalledWith('../advanced.md', 'docs/guide/index.md');
+  });
+
+  it('normalizes leading-slash workspace links for markdown documents', () => {
+    const onOpenWorkspacePath = vi.fn();
+    render(
+      <MarkdownRenderer
+        content="[todo](/docs/todo.md)"
+        currentDocumentPath="notes/index.md"
+        onOpenWorkspacePath={onOpenWorkspacePath}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('link', { name: 'todo' }));
+
+    expect(onOpenWorkspacePath).toHaveBeenCalledWith('docs/todo.md', 'notes/index.md');
   });
 
   it('keeps external links as normal browser links when a handler is provided', () => {

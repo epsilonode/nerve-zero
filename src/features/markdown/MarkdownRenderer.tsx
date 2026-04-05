@@ -11,7 +11,8 @@ interface MarkdownRendererProps {
   className?: string;
   searchQuery?: string;
   suppressImages?: boolean;
-  onOpenWorkspacePath?: (path: string) => void | Promise<void>;
+  currentDocumentPath?: string;
+  onOpenWorkspacePath?: (path: string, basePath?: string) => void | Promise<void>;
 }
 
 function highlightText(text: string, query: string): React.ReactNode {
@@ -65,6 +66,17 @@ function decodeWorkspacePathLink(href: string): string {
   }
 }
 
+function normalizeWorkspaceLinkTarget(href: string): string {
+  const decoded = decodeWorkspacePathLink(href).trim();
+  if (!decoded) return decoded;
+
+  if (decoded.startsWith('/')) {
+    return decoded.replace(/^\/+/, '');
+  }
+
+  return decoded;
+}
+
 // ─── Code Block with actions ─────────────────────────────────────────────────
 
 function CodeBlock({ code, language, highlightedHtml }: {
@@ -89,7 +101,7 @@ function CodeBlock({ code, language, highlightedHtml }: {
 // ─── Main renderer ───────────────────────────────────────────────────────────
 
 /** Render markdown content with syntax highlighting, search-term highlighting, and inline charts. */
-export function MarkdownRenderer({ content, className = '', searchQuery, suppressImages, onOpenWorkspacePath }: MarkdownRendererProps) {
+export function MarkdownRenderer({ content, className = '', searchQuery, suppressImages, currentDocumentPath, onOpenWorkspacePath }: MarkdownRendererProps) {
   // Memoize components object to avoid unnecessary ReactMarkdown re-renders.
   // Only recreated when searchQuery or suppressImages changes.
   const components = useMemo(() => ({
@@ -149,13 +161,14 @@ export function MarkdownRenderer({ content, className = '', searchQuery, suppres
       }
 
       if (onOpenWorkspacePath && isWorkspacePathLink(href)) {
+        const normalizedTarget = normalizeWorkspaceLinkTarget(href);
         return (
           <a
             href={href}
             className="markdown-link"
             onClick={(event) => {
               event.preventDefault();
-              void onOpenWorkspacePath(decodeWorkspacePathLink(href));
+              void onOpenWorkspacePath(normalizedTarget, currentDocumentPath);
             }}
           >
             {children}
@@ -170,7 +183,7 @@ export function MarkdownRenderer({ content, className = '', searchQuery, suppres
       );
     },
     ...(suppressImages ? { img: () => null } : {}), // When set, images handled by extractedImages + ImageLightbox
-  }), [onOpenWorkspacePath, searchQuery, suppressImages]);
+  }), [currentDocumentPath, onOpenWorkspacePath, searchQuery, suppressImages]);
 
   return (
     <div className={`markdown-content ${className}`}>

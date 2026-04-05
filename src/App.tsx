@@ -328,8 +328,11 @@ export default function App({ onLogout }: AppProps) {
     setViewMode('kanban');
   }, [setViewMode]);
 
-  const openWorkspacePath = useCallback(async (targetPath: string) => {
+  const openWorkspacePath = useCallback(async (targetPath: string, basePath?: string) => {
     const params = new URLSearchParams({ path: targetPath, agentId: workspaceAgentId });
+    if (basePath) {
+      params.set('relativeTo', basePath);
+    }
     const res = await fetch(`/api/files/resolve?${params.toString()}`);
     const data = await res.json().catch(() => null) as {
       ok?: boolean;
@@ -631,6 +634,7 @@ export default function App({ onLogout }: AppProps) {
       onDismissToast={dismissSaveToast}
       onReloadFile={reloadFile}
       onRetryFile={reloadFile}
+      onOpenWorkspacePath={openWorkspacePath}
       chatPanel={
         <PanelErrorBoundary name="Chat">
           <ChatPanel
