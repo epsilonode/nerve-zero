@@ -293,7 +293,8 @@ app.get('/api/files/resolve', async (c) => {
     if (!relativeTo) return targetPath;
     if (targetPath.startsWith('/')) return targetPath.replace(/^\/+/, '');
 
-    const relativeDir = path.posix.dirname(relativeTo.replace(/\\/g, '/'));
+    const normalizedRelativeTo = relativeTo.replace(/\\/g, '/').replace(/^\/+/, '');
+    const relativeDir = path.posix.dirname(normalizedRelativeTo);
     return path.posix.normalize(path.posix.join(relativeDir === '.' ? '' : relativeDir, targetPath));
   })();
 

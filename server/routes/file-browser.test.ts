@@ -134,6 +134,17 @@ describe('file-browser routes', () => {
       expect(json).toEqual({ ok: true, path: 'docs/todo.md', type: 'file', binary: false });
     });
 
+    it('resolves workspace-root-document relative links even when relativeTo is slash-prefixed', async () => {
+      await fs.mkdir(path.join(tmpDir, 'projects', 'demo'), { recursive: true });
+      await fs.writeFile(path.join(tmpDir, 'projects', 'demo', 'notes.md'), '# Notes');
+      const app = await buildApp();
+
+      const res = await app.request('/api/files/resolve?path=./projects/demo/notes.md&relativeTo=/README.md');
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as { ok: boolean; path: string; type: string; binary: boolean };
+      expect(json).toEqual({ ok: true, path: 'projects/demo/notes.md', type: 'file', binary: false });
+    });
+
     it('returns 404 for safe missing targets inside the workspace root', async () => {
       const app = await buildApp();
       const res = await app.request('/api/files/resolve?path=missing-note.md');

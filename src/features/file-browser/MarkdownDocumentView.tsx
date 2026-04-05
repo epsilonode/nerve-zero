@@ -64,7 +64,8 @@ export function MarkdownDocumentView({
             <MarkdownRenderer
               content={previewContent}
               className="markdown-document-content"
-              onOpenWorkspacePath={(targetPath) => onOpenWorkspacePath?.(targetPath, file.path)}
+              currentDocumentPath={file.path}
+              onOpenWorkspacePath={(targetPath, basePath) => onOpenWorkspacePath?.(targetPath, basePath ?? file.path)}
             />
           </article>
         </div>

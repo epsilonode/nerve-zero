@@ -108,6 +108,39 @@ describe('MarkdownRenderer', () => {
     expect(onOpenWorkspacePath).toHaveBeenCalledWith('docs/todo.md', 'notes/index.md');
   });
 
+  it('adds stable ids to headings for same-document anchor navigation', () => {
+    render(<MarkdownRenderer content={'## External Links'} />);
+
+    expect(document.querySelector('h2#external-links')).toBeTruthy();
+  });
+
+  it('handles same-document anchor links in-app instead of opening a new tab', () => {
+    const onOpenWorkspacePath = vi.fn();
+    const scrollIntoView = vi.fn();
+    const replaceState = vi.spyOn(window.history, 'replaceState').mockImplementation(() => undefined);
+
+    Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    });
+
+    render(
+      <MarkdownRenderer
+        content={'[Jump](#external-links)\n\n## External Links'}
+        onOpenWorkspacePath={onOpenWorkspacePath}
+      />,
+    );
+
+    const link = screen.getByRole('link', { name: 'Jump' });
+    expect(link).not.toHaveAttribute('target', '_blank');
+
+    fireEvent.click(link);
+
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(replaceState).toHaveBeenCalledWith(null, '', '#external-links');
+    expect(onOpenWorkspacePath).not.toHaveBeenCalled();
+  });
+
   it('keeps external links as normal browser links when a handler is provided', () => {
     const onOpenWorkspacePath = vi.fn();
     render(<MarkdownRenderer content="[example](https://example.com)" onOpenWorkspacePath={onOpenWorkspacePath} />);
