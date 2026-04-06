@@ -1,6 +1,6 @@
 /** Tests for the MarkdownRenderer component. */
 import { describe, it, expect, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 // Mock highlight.js to avoid complex setup
 vi.mock('@/lib/highlight', () => ({
@@ -67,6 +67,52 @@ describe('MarkdownRenderer', () => {
     const link = document.querySelector('a');
     expect(link).toBeTruthy();
     expect(link?.getAttribute('href')).toBe('https://example.com');
+  });
+
+  it('linkifies configured inline /workspace paths', () => {
+    const onOpenWorkspacePath = vi.fn();
+    render(
+      <MarkdownRenderer
+        content="Open /workspace/src/App.tsx now"
+        onOpenWorkspacePath={onOpenWorkspacePath}
+        pathLinkPrefixes={['/workspace/']}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('link', { name: '/workspace/src/App.tsx' }));
+    expect(onOpenWorkspacePath).toHaveBeenCalledWith('/workspace/src/App.tsx');
+  });
+
+  it('logs and swallows rejected inline workspace path opens', async () => {
+    const error = new Error('nope');
+    const onOpenWorkspacePath = vi.fn().mockRejectedValueOnce(error);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    render(
+      <MarkdownRenderer
+        content="Open /workspace/src/App.tsx now"
+        onOpenWorkspacePath={onOpenWorkspacePath}
+        pathLinkPrefixes={['/workspace/']}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('link', { name: '/workspace/src/App.tsx' }));
+
+    await waitFor(() => {
+      expect(consoleError).toHaveBeenCalledWith('Failed to open workspace path link:', error);
+    });
+
+    consoleError.mockRestore();
+  });
+
+  it('does not linkify relative paths when only /workspace is configured', () => {
+    render(<MarkdownRenderer content="src/App.tsx" pathLinkPrefixes={['/workspace/']} onOpenWorkspacePath={vi.fn()} />);
+    expect(screen.queryByRole('link', { name: 'src/App.tsx' })).toBeNull();
+  });
+
+  it('does not linkify configured path text inside inline code', () => {
+    render(<MarkdownRenderer content="Use `/workspace/src/App.tsx` later" pathLinkPrefixes={['/workspace/']} onOpenWorkspacePath={vi.fn()} />);
+    expect(screen.queryByRole('link', { name: '/workspace/src/App.tsx' })).toBeNull();
   });
 
   it('opens workspace links in-app when a handler is provided', () => {
@@ -139,6 +185,22 @@ describe('MarkdownRenderer', () => {
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
     expect(replaceState).toHaveBeenCalledWith(null, '', '#external-links');
     expect(onOpenWorkspacePath).not.toHaveBeenCalled();
+  });
+
+  it('logs and swallows rejected markdown workspace link opens', async () => {
+    const error = new Error('nope');
+    const onOpenWorkspacePath = vi.fn().mockRejectedValueOnce(error);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    render(<MarkdownRenderer content="[notes](docs/todo.md)" onOpenWorkspacePath={onOpenWorkspacePath} />);
+
+    fireEvent.click(screen.getByRole('link', { name: 'notes' }));
+
+    await waitFor(() => {
+      expect(consoleError).toHaveBeenCalledWith('Failed to open workspace path link:', error);
+    });
+
+    consoleError.mockRestore();
   });
 
   it('keeps external links as normal browser links when a handler is provided', () => {

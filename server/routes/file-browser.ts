@@ -173,6 +173,19 @@ function gatewayFilesToTree(files: Awaited<ReturnType<typeof gatewayFilesList>>)
     }));
 }
 
+function normalizeWorkspaceLookupPath(input: string): string {
+  const trimmed = input.trim();
+  if (trimmed === '/workspace' || trimmed === '/workspace/') {
+    return '.';
+  }
+
+  if (trimmed.startsWith('/workspace/')) {
+    return trimmed.slice('/workspace/'.length);
+  }
+
+  return trimmed;
+}
+
 // ── GET /api/files/tree ──────────────────────────────────────────────
 
 app.get('/api/files/tree', async (c) => {
@@ -289,13 +302,14 @@ app.get('/api/files/resolve', async (c) => {
     return c.json({ ok: false, error: 'Not supported for remote workspaces', code: 'REMOTE_WORKSPACE' }, 501);
   }
 
+  const normalizedTargetPath = normalizeWorkspaceLookupPath(targetPath);
   const workspaceRelativePath = (() => {
-    if (!relativeTo) return targetPath;
-    if (targetPath.startsWith('/')) return targetPath.replace(/^\/+/, '');
+    if (!relativeTo) return normalizedTargetPath;
+    if (normalizedTargetPath.startsWith('/')) return normalizedTargetPath.replace(/^\/+/, '');
 
-    const normalizedRelativeTo = relativeTo.replace(/\\/g, '/').replace(/^\/+/, '');
+    const normalizedRelativeTo = normalizeWorkspaceLookupPath(relativeTo.replace(/\\/g, '/')).replace(/^\/+/, '');
     const relativeDir = path.posix.dirname(normalizedRelativeTo);
-    return path.posix.normalize(path.posix.join(relativeDir === '.' ? '' : relativeDir, targetPath));
+    return path.posix.normalize(path.posix.join(relativeDir === '.' ? '' : relativeDir, normalizedTargetPath));
   })();
 
   const resolved = await resolveWorkspacePathForRoot(

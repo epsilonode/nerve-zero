@@ -5,6 +5,7 @@ import { hljs } from '@/lib/highlight';
 import { sanitizeHtml } from '@/lib/sanitize';
 import { escapeRegex } from '@/lib/constants';
 import { CodeBlockActions } from './CodeBlockActions';
+import { renderInlinePathReferences } from './inlineReferences';
 
 interface MarkdownRendererProps {
   content: string;
@@ -13,6 +14,7 @@ interface MarkdownRendererProps {
   suppressImages?: boolean;
   currentDocumentPath?: string;
   onOpenWorkspacePath?: (path: string, basePath?: string) => void | Promise<void>;
+  pathLinkPrefixes?: string[];
 }
 
 function slugifyHeadingText(text: string): string {
@@ -48,34 +50,51 @@ function collectText(children: React.ReactNode): string {
 
 function highlightText(text: string, query: string): React.ReactNode {
   if (!query.trim()) return text;
-  
+
   const regex = new RegExp(`(${escapeRegex(query)})`, 'gi');
   const parts = text.split(regex);
-  
-  // split() with a capture group alternates: non-match, match, non-match, ...
-  // Odd indices are always the captured matches — no regex.test() needed
-  return parts.map((part, i) => 
+
+  return parts.map((part, i) =>
     i % 2 === 1 ? (
       <mark key={i} className="search-highlight">{part}</mark>
-    ) : part
+    ) : part,
   );
 }
 
-// Process React children to apply search highlighting to text nodes
-function processChildren(children: React.ReactNode, searchQuery?: string): React.ReactNode {
-  if (!searchQuery?.trim()) return children;
-  
+function processChildren(
+  children: React.ReactNode,
+  options: {
+    searchQuery?: string;
+    pathLinkPrefixes?: string[];
+    onOpenWorkspacePath?: (path: string) => void | Promise<void>;
+  } = {},
+): React.ReactNode {
+  const { searchQuery, pathLinkPrefixes, onOpenWorkspacePath } = options;
+  const renderPlainText = (text: string) => highlightText(text, searchQuery ?? '');
+
   return React.Children.map(children, (child) => {
     if (typeof child === 'string') {
-      return highlightText(child, searchQuery);
+      return renderInlinePathReferences(child, {
+        prefixes: pathLinkPrefixes,
+        onOpenPath: onOpenWorkspacePath,
+        renderPlainText,
+      });
     }
-    if (React.isValidElement<{ children?: React.ReactNode }>(child)) {
+
+    if (React.isValidElement<{ children?: React.ReactNode; node?: { tagName?: string } }>(child)) {
+      const tagName = typeof child.type === 'string' ? child.type : '';
+      const markdownTagName = child.props.node?.tagName ?? '';
+      if (tagName === 'code' || tagName === 'pre' || tagName === 'a' || markdownTagName === 'code' || markdownTagName === 'pre' || markdownTagName === 'a') {
+        return child;
+      }
+
       if (child.props.children) {
         return React.cloneElement(child, {
-          children: processChildren(child.props.children, searchQuery),
+          children: processChildren(child.props.children, options),
         });
       }
     }
+
     return child;
   });
 }
@@ -108,8 +127,6 @@ function normalizeWorkspaceLinkTarget(href: string): string {
   return decoded;
 }
 
-// ─── Code Block with actions ─────────────────────────────────────────────────
-
 function CodeBlock({ code, language, highlightedHtml }: {
   code: string;
   language: string;
@@ -129,11 +146,25 @@ function CodeBlock({ code, language, highlightedHtml }: {
   );
 }
 
-// ─── Main renderer ───────────────────────────────────────────────────────────
-
-/** Render markdown content with syntax highlighting, search-term highlighting, and inline charts. */
-export function MarkdownRenderer({ content, className = '', searchQuery, suppressImages, currentDocumentPath, onOpenWorkspacePath }: MarkdownRendererProps) {
+/** Render markdown content with syntax highlighting, search highlighting, inline path refs, and in-doc anchors. */
+export function MarkdownRenderer({
+  content,
+  className = '',
+  searchQuery,
+  suppressImages,
+  currentDocumentPath,
+  onOpenWorkspacePath,
+  pathLinkPrefixes,
+}: MarkdownRendererProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+
+  const childOptions = useMemo(() => ({
+    searchQuery,
+    pathLinkPrefixes,
+    onOpenWorkspacePath: onOpenWorkspacePath
+      ? (path: string) => onOpenWorkspacePath(path)
+      : undefined,
+  }), [searchQuery, pathLinkPrefixes, onOpenWorkspacePath]);
 
   const scrollToAnchor = useCallback((href: string) => {
     const rawAnchor = href.replace(/^#/, '').trim();
@@ -169,11 +200,10 @@ export function MarkdownRenderer({ content, className = '', searchQuery, suppres
     const createHeading = (Tag: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') =>
       ({ children }: { children?: React.ReactNode }) => {
         const id = buildHeadingId(children);
-        return <Tag id={id}>{processChildren(children, searchQuery)}</Tag>;
+        return <Tag id={id}>{processChildren(children, childOptions)}</Tag>;
       };
 
     return {
-      // Highlight search terms in text nodes
       h1: createHeading('h1'),
       h2: createHeading('h2'),
       h3: createHeading('h3'),
@@ -181,106 +211,103 @@ export function MarkdownRenderer({ content, className = '', searchQuery, suppres
       h5: createHeading('h5'),
       h6: createHeading('h6'),
       p: ({ children }: { children?: React.ReactNode }) => (
-        <p>{processChildren(children, searchQuery)}</p>
+        <p>{processChildren(children, childOptions)}</p>
       ),
       li: ({ children }: { children?: React.ReactNode }) => (
-        <li>{processChildren(children, searchQuery)}</li>
+        <li>{processChildren(children, childOptions)}</li>
       ),
       td: ({ children }: { children?: React.ReactNode }) => (
-        <td>{processChildren(children, searchQuery)}</td>
+        <td>{processChildren(children, childOptions)}</td>
       ),
       th: ({ children }: { children?: React.ReactNode }) => (
-        <th>{processChildren(children, searchQuery)}</th>
+        <th>{processChildren(children, childOptions)}</th>
       ),
       code: ({ className: codeClassName, children, ...props }: { className?: string; children?: React.ReactNode }) => {
-      const match = /language-(\w+)/.exec(codeClassName || '');
-      const lang = match ? match[1] : '';
-      const codeString = String(children).replace(/\n$/, '');
-      const inline = !codeClassName;
+        const match = /language-(\w+)/.exec(codeClassName || '');
+        const lang = match ? match[1] : '';
+        const codeString = String(children).replace(/\n$/, '');
+        const inline = !codeClassName;
 
-      if (!inline && lang) {
-        try {
-          const highlighted = hljs.getLanguage(lang)
-            ? hljs.highlight(codeString, { language: lang }).value
-            : hljs.highlightAuto(codeString).value;
+        if (!inline && lang) {
+          try {
+            const highlighted = hljs.getLanguage(lang)
+              ? hljs.highlight(codeString, { language: lang }).value
+              : hljs.highlightAuto(codeString).value;
 
+            return (
+              <CodeBlock
+                code={codeString}
+                language={lang}
+                highlightedHtml={sanitizeHtml(highlighted)}
+              />
+            );
+          } catch {
+            return <CodeBlock code={codeString} language={lang} />;
+          }
+        }
+
+        return (
+          <code className={codeClassName} {...props}>
+            {children}
+          </code>
+        );
+      },
+      table: ({ children }: { children?: React.ReactNode }) => (
+        <div className="table-wrapper">
+          <table className="markdown-table">{children}</table>
+        </div>
+      ),
+      a: ({ children, href }: { children?: React.ReactNode; href?: string }) => {
+        if (!href) {
+          return <span>{children}</span>;
+        }
+
+        if (href.trim().startsWith('#')) {
           return (
-            <CodeBlock
-              code={codeString}
-              language={lang}
-              highlightedHtml={sanitizeHtml(highlighted)}
-            />
-          );
-        } catch {
-          return (
-            <CodeBlock code={codeString} language={lang} />
+            <a
+              href={href}
+              className="markdown-link"
+              onClick={(event) => {
+                event.preventDefault();
+                scrollToAnchor(href);
+              }}
+            >
+              {children}
+            </a>
           );
         }
-      }
 
-      return (
-        <code className={codeClassName} {...props}>
-          {children}
-        </code>
-      );
-    },
-    table: ({ children }: { children?: React.ReactNode }) => (
-      <div className="table-wrapper">
-        <table className="markdown-table">{children}</table>
-      </div>
-    ),
-    a: ({ children, href }: { children?: React.ReactNode; href?: string }) => {
-      if (!href) {
-        return <span>{children}</span>;
-      }
+        if (onOpenWorkspacePath && isWorkspacePathLink(href)) {
+          const normalizedTarget = normalizeWorkspaceLinkTarget(href);
+          return (
+            <a
+              href={href}
+              className="markdown-link"
+              onClick={(event) => {
+                event.preventDefault();
+                Promise.resolve(onOpenWorkspacePath(normalizedTarget, currentDocumentPath)).catch((error) => {
+                  console.error('Failed to open workspace path link:', error);
+                });
+              }}
+            >
+              {children}
+            </a>
+          );
+        }
 
-      if (href.trim().startsWith('#')) {
         return (
-          <a
-            href={href}
-            className="markdown-link"
-            onClick={(event) => {
-              event.preventDefault();
-              scrollToAnchor(href);
-            }}
-          >
+          <a href={href} target="_blank" rel="noopener noreferrer" className="markdown-link">
             {children}
           </a>
         );
-      }
-
-      if (onOpenWorkspacePath && isWorkspacePathLink(href)) {
-        const normalizedTarget = normalizeWorkspaceLinkTarget(href);
-        return (
-          <a
-            href={href}
-            className="markdown-link"
-            onClick={(event) => {
-              event.preventDefault();
-              void onOpenWorkspacePath(normalizedTarget, currentDocumentPath);
-            }}
-          >
-            {children}
-          </a>
-        );
-      }
-
-      return (
-        <a href={href} target="_blank" rel="noopener noreferrer" className="markdown-link">
-          {children}
-        </a>
-      );
-    },
-      ...(suppressImages ? { img: () => null } : {}), // When set, images handled by extractedImages + ImageLightbox
+      },
+      ...(suppressImages ? { img: () => null } : {}),
     };
-  }, [currentDocumentPath, onOpenWorkspacePath, scrollToAnchor, searchQuery, suppressImages]);
+  }, [childOptions, currentDocumentPath, onOpenWorkspacePath, scrollToAnchor, suppressImages]);
 
   return (
     <div ref={containerRef} className={`markdown-content ${className}`}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={components}
-      >
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {content}
       </ReactMarkdown>
     </div>
