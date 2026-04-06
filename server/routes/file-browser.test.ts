@@ -9,12 +9,16 @@ describe('file-browser routes', () => {
   let homeDir: string;
   let tmpDir: string;
   let researchWorkspace: string;
+  let remoteHomeDir: string;
+  let remoteWorkspace: string;
 
   beforeEach(async () => {
     vi.resetModules();
     homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'fbrowser-test-'));
     tmpDir = path.join(homeDir, '.openclaw', 'workspace');
     researchWorkspace = path.join(homeDir, '.openclaw', 'workspace-research');
+    remoteHomeDir = path.join(homeDir, 'remote-nonexistent');
+    remoteWorkspace = path.join(remoteHomeDir, '.openclaw', 'workspace');
     await fs.mkdir(tmpDir, { recursive: true });
     // Create a MEMORY.md in the tmpDir so getWorkspaceRoot returns tmpDir
     await fs.writeFile(path.join(tmpDir, 'MEMORY.md'), '# Memories\n');
@@ -25,21 +29,43 @@ describe('file-browser routes', () => {
     await fs.rm(homeDir, { recursive: true, force: true });
   });
 
-  async function buildApp(opts?: { fileBrowserRoot?: string }) {
+  async function buildApp(opts?: {
+    fileBrowserRoot?: string;
+    remote?: boolean;
+    gatewayFilesListResult?: Array<{ name: string; missing?: boolean; size?: number; updatedAtMs?: number }>;
+  }) {
     vi.resetModules();
+    vi.doUnmock('../lib/gateway-rpc.js');
+
+    const useRemote = opts?.remote ?? false;
+    const configuredHomeDir = useRemote ? remoteHomeDir : homeDir;
+    const configuredWorkspace = useRemote ? remoteWorkspace : tmpDir;
+
     vi.doMock('../lib/config.js', () => ({
       config: {
         auth: false,
         port: 3000,
         host: '127.0.0.1',
         sslPort: 3443,
-        home: homeDir,
-        memoryPath: path.join(tmpDir, 'MEMORY.md'),
-        memoryDir: path.join(tmpDir, 'memory'),
+        home: configuredHomeDir,
+        memoryPath: path.join(configuredWorkspace, 'MEMORY.md'),
+        memoryDir: path.join(configuredWorkspace, 'memory'),
         fileBrowserRoot: opts?.fileBrowserRoot ?? '',
+        workspaceRemote: false,
       },
       SESSION_COOKIE_NAME: 'nerve_session_3000',
     }));
+
+    if (useRemote) {
+      vi.doMock('../lib/gateway-rpc.js', () => ({
+        gatewayFilesList: vi.fn().mockResolvedValue(opts?.gatewayFilesListResult ?? []),
+        gatewayFilesGet: vi.fn(),
+        gatewayFilesSet: vi.fn(),
+      }));
+
+      const detectMod = await import('../lib/workspace-detect.js');
+      detectMod.clearWorkspaceDetectCache();
+    }
 
     const mod = await import('./file-browser.js');
     const app = new Hono();
@@ -116,6 +142,28 @@ describe('file-browser routes', () => {
 
       expect(names).toContain('.hidden.md');
       expect(names).toContain('.plans');
+    });
+
+    it('includes hidden workspace entries when showHidden=true via remote gateway fallback', async () => {
+      const app = await buildApp({
+        remote: true,
+        gatewayFilesListResult: [
+          { name: '.hidden.md', missing: false, size: 6, updatedAtMs: 1000 },
+          { name: '.plans', missing: false, size: 0, updatedAtMs: 1001 },
+          { name: 'visible.md', missing: false, size: 5, updatedAtMs: 1002 },
+        ],
+      });
+
+      const res = await app.request('/api/files/tree?showHidden=true');
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as { ok: boolean; entries: Array<{ name: string }>; remoteWorkspace?: boolean };
+      const names = json.entries.map((e) => e.name);
+
+      expect(json.ok).toBe(true);
+      expect(json.remoteWorkspace).toBe(true);
+      expect(names).toContain('.hidden.md');
+      expect(names).toContain('.plans');
+      expect(names).toContain('visible.md');
     });
   });
 

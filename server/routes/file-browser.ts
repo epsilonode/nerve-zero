@@ -114,7 +114,7 @@ async function listDirectory(
     if (inTrash) {
       // Internal metadata file for restore bookkeeping.
       if (item.name === '.index.json') continue;
-    // FILE_BROWSER_ROOT: Show all files when custom root is set, but always hide .trash folder
+    // Hide dotfiles unless showHidden=true, except for .nerveignore and .trash; custom roots still hide .trash.
     } else if (!showHidden && item.name.startsWith('.') && item.name !== '.nerveignore' && item.name !== '.trash') {
       continue;
     } else if (config.fileBrowserRoot && item.name === '.trash') {
@@ -162,9 +162,13 @@ function handleFileOpError(c: Context, err: unknown) {
 }
 
 /** Convert gateway file list to TreeEntry format for the UI. */
-function gatewayFilesToTree(files: Awaited<ReturnType<typeof gatewayFilesList>>): TreeEntry[] {
+function gatewayFilesToTree(
+  files: Awaited<ReturnType<typeof gatewayFilesList>>,
+  showHidden: boolean,
+): TreeEntry[] {
   return files
     .filter((f) => !f.missing)
+    .filter((f) => showHidden || !f.name.startsWith('.') || f.name === '.nerveignore' || f.name === '.trash')
     .map((f) => ({
       name: f.name,
       path: f.name,
@@ -245,7 +249,7 @@ app.get('/api/files/tree', async (c) => {
 
   try {
     const remoteFiles = await gatewayFilesList(workspace.agentId);
-    const entries = gatewayFilesToTree(remoteFiles);
+    const entries = gatewayFilesToTree(remoteFiles, showHidden);
     return c.json({
       ok: true,
       root: '.',
