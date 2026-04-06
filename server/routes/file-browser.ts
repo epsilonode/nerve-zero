@@ -89,6 +89,7 @@ async function listDirectory(
   dirPath: string,
   basePath: string,
   depth: number,
+  showHidden: boolean,
 ): Promise<TreeEntry[]> {
   const entries: TreeEntry[] = [];
 
@@ -114,7 +115,7 @@ async function listDirectory(
       // Internal metadata file for restore bookkeeping.
       if (item.name === '.index.json') continue;
     // FILE_BROWSER_ROOT: Show all files when custom root is set, but always hide .trash folder
-    } else if (!config.fileBrowserRoot && item.name.startsWith('.') && item.name !== '.nerveignore' && item.name !== '.trash') {
+    } else if (!showHidden && item.name.startsWith('.') && item.name !== '.nerveignore' && item.name !== '.trash') {
       continue;
     } else if (config.fileBrowserRoot && item.name === '.trash') {
       continue;
@@ -129,7 +130,7 @@ async function listDirectory(
         path: relativePath,
         type: 'directory',
         children: depth > 1
-          ? await listDirectory(fullPath, relativePath, depth - 1)
+          ? await listDirectory(fullPath, relativePath, depth - 1, showHidden)
           : null,
       });
     } else if (item.isFile()) {
@@ -186,6 +187,7 @@ app.get('/api/files/tree', async (c) => {
   const root = workspace.workspaceRoot;
   const subPath = c.req.query('path') || '';
   const depth = Math.min(Math.max(Number(c.req.query('depth')) || 1, 1), 5);
+  const showHidden = c.req.query('showHidden') === 'true';
 
   // Check if workspace is local
   const isLocal = await isWorkspaceLocal(root);
@@ -213,7 +215,7 @@ app.get('/api/files/tree', async (c) => {
       targetDir = root;
     }
 
-    const entries = await listDirectory(targetDir, subPath, depth);
+    const entries = await listDirectory(targetDir, subPath, depth, showHidden);
 
     return c.json({
       ok: true,

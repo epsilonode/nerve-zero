@@ -419,6 +419,93 @@ describe('useFileTree', () => {
 
       expect(mockLocalStorage.getItem).toHaveBeenCalledWith(getWorkspaceStorageKey('file-tree-expanded', 'main'));
     });
+
+    it('includes showHidden in tree requests when enabled', async () => {
+      const mockFetch = vi.mocked(fetch);
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          ok: true,
+          entries: [],
+          workspaceInfo: { isCustomWorkspace: false, rootPath: '/workspace' },
+        }),
+      } as Response);
+
+      renderHook(() => useFileTree('main', true));
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalled();
+      });
+
+      const requestUrl = getRequestUrl(mockFetch.mock.calls[0]![0]);
+      expect(requestUrl.searchParams.get('showHidden')).toBe('true');
+    });
+
+    it('reloads the tree when hidden entry visibility changes', async () => {
+      const mockFetch = vi.mocked(fetch);
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            ok: true,
+            entries: [
+              { name: 'src', path: 'src', type: 'directory' as const, children: null },
+            ],
+            workspaceInfo: { isCustomWorkspace: false, rootPath: '/workspace' },
+          }),
+        } as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            ok: true,
+            entries: [
+              { name: '.plans', path: '.plans', type: 'directory' as const, children: null },
+              { name: 'src', path: 'src', type: 'directory' as const, children: null },
+            ],
+            workspaceInfo: { isCustomWorkspace: false, rootPath: '/workspace' },
+          }),
+        } as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            ok: true,
+            entries: [
+              { name: 'demo.md', path: '.plans/demo.md', type: 'file' as const, children: null },
+            ],
+          }),
+        } as Response);
+
+      const { result, rerender } = renderHook(
+        ({ showHidden }: { showHidden: boolean }) => useFileTree('main', showHidden),
+        { initialProps: { showHidden: false } },
+      );
+
+      await waitFor(() => {
+        expect(result.current.loading).toBe(false);
+        expect(result.current.entries.map((entry) => entry.path)).toEqual(['src']);
+      });
+
+      rerender({ showHidden: true });
+
+      await waitFor(() => {
+        expect(result.current.entries.map((entry) => entry.path)).toEqual(['.plans', 'src']);
+      });
+
+      await act(async () => {
+        await result.current.revealPath('.plans/demo.md', 'file');
+      });
+
+      await waitFor(() => {
+        expect(result.current.expandedPaths.has('.plans')).toBe(true);
+        expect(result.current.selectedPath).toBe('.plans/demo.md');
+      });
+
+      const reloadedRootUrl = getRequestUrl(mockFetch.mock.calls[1]![0]);
+      const revealUrl = getRequestUrl(mockFetch.mock.calls[2]![0]);
+      expect(reloadedRootUrl.searchParams.get('showHidden')).toBe('true');
+      expect(revealUrl.searchParams.get('showHidden')).toBe('true');
+      expect(revealUrl.searchParams.get('path')).toBe('.plans');
+    });
   });
 
   describe('return object includes workspaceInfo', () => {

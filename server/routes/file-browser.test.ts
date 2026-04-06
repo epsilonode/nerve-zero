@@ -89,6 +89,34 @@ describe('file-browser routes', () => {
       expect(names).not.toContain('node_modules');
       expect(names).not.toContain('.git');
     });
+
+    it('hides hidden workspace entries by default', async () => {
+      await fs.writeFile(path.join(tmpDir, '.hidden.md'), 'secret');
+      await fs.writeFile(path.join(tmpDir, 'visible.md'), 'hello');
+
+      const app = await buildApp();
+      const res = await app.request('/api/files/tree');
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as { ok: boolean; entries: Array<{ name: string }> };
+      const names = json.entries.map(e => e.name);
+
+      expect(names).toContain('visible.md');
+      expect(names).not.toContain('.hidden.md');
+    });
+
+    it('includes hidden workspace entries when showHidden=true', async () => {
+      await fs.writeFile(path.join(tmpDir, '.hidden.md'), 'secret');
+      await fs.mkdir(path.join(tmpDir, '.plans'));
+
+      const app = await buildApp();
+      const res = await app.request('/api/files/tree?showHidden=true');
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as { ok: boolean; entries: Array<{ name: string }> };
+      const names = json.entries.map(e => e.name);
+
+      expect(names).toContain('.hidden.md');
+      expect(names).toContain('.plans');
+    });
   });
 
   describe('GET /api/files/resolve', () => {

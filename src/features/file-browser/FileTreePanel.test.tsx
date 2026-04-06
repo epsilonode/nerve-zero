@@ -9,6 +9,13 @@ vi.mock('./hooks/useFileTree', () => ({
   useFileTree: vi.fn(),
 }));
 
+// Mock settings context
+vi.mock('@/contexts/SettingsContext', () => ({
+  useSettings: () => ({
+    showHiddenWorkspaceEntries: false,
+  }),
+}));
+
 // Mock the ConfirmDialog component
 vi.mock('../../components/ConfirmDialog', () => ({
   ConfirmDialog: ({ open, title, message, onConfirm, onCancel }: {

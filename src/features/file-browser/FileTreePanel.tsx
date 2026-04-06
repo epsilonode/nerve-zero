@@ -10,6 +10,7 @@ import { PanelLeftClose, RefreshCw, Pencil, Trash2, RotateCcw, X } from 'lucide-
 import { FileTreeNode } from './FileTreeNode';
 import { useFileTree } from './hooks/useFileTree';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
+import { useSettings } from '@/contexts/SettingsContext';
 import type { TreeEntry } from './types';
 
 const MIN_WIDTH = 160;
@@ -107,10 +108,11 @@ export function FileTreePanel({
   onCollapseChange,
   collapsed,
 }: FileTreePanelProps) {
+  const { showHiddenWorkspaceEntries } = useSettings();
   const {
     entries, loading, error, expandedPaths, selectedPath,
     loadingPaths, workspaceInfo, toggleDirectory, selectFile, refresh, handleFileChange, revealPath,
-  } = useFileTree(workspaceAgentId);
+  } = useFileTree(workspaceAgentId, showHiddenWorkspaceEntries);
 
   // React to external file changes. Sequence keeps repeated same-path events distinct,
   // and agentId prevents a stale event from one workspace from replaying in another.
