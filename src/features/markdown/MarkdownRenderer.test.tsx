@@ -154,6 +154,42 @@ describe('MarkdownRenderer', () => {
     expect(onOpenWorkspacePath).toHaveBeenCalledWith('/docs/todo.md', 'notes/index.md');
   });
 
+  it('splits fragments from workspace link paths before opening files', async () => {
+    const onOpenWorkspacePath = vi.fn().mockResolvedValue(undefined);
+    const replaceState = vi.spyOn(window.history, 'replaceState').mockImplementation(() => undefined);
+
+    render(
+      <MarkdownRenderer
+        content="[guide](docs/guide.md#intro)"
+        currentDocumentPath="notes/index.md"
+        onOpenWorkspacePath={onOpenWorkspacePath}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('link', { name: 'guide' }));
+
+    await waitFor(() => {
+      expect(onOpenWorkspacePath).toHaveBeenCalledWith('docs/guide.md', 'notes/index.md');
+      expect(replaceState).toHaveBeenCalledWith(null, '', '#intro');
+    });
+
+    replaceState.mockRestore();
+  });
+
+  it('does not split encoded hash characters in workspace link paths', () => {
+    const onOpenWorkspacePath = vi.fn();
+    render(
+      <MarkdownRenderer
+        content="[guide](foo%23bar.md)"
+        onOpenWorkspacePath={onOpenWorkspacePath}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('link', { name: 'guide' }));
+
+    expect(onOpenWorkspacePath).toHaveBeenCalledWith('foo#bar.md', undefined);
+  });
+
   it('adds stable ids to headings for same-document anchor navigation', () => {
     render(<MarkdownRenderer content={'## External Links'} />);
 
@@ -241,6 +277,12 @@ describe('MarkdownRenderer', () => {
 
     fireEvent.click(link);
     expect(onOpenWorkspacePath).not.toHaveBeenCalled();
+  });
+
+  it('preserves markdown-provided link attributes', () => {
+    render(<MarkdownRenderer content={'[example](https://example.com "Read more")'} />);
+
+    expect(screen.getByRole('link', { name: 'example' })).toHaveAttribute('title', 'Read more');
   });
 
   it('renders code blocks', () => {

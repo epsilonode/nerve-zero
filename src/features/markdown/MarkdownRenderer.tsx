@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { hljs } from '@/lib/highlight';
@@ -17,6 +17,45 @@ interface MarkdownRendererProps {
   pathLinkPrefixes?: string[];
 }
 
+interface MarkdownAstNode {
+  type?: string;
+  value?: string;
+  alt?: string;
+  children?: MarkdownAstNode[];
+  data?: {
+    hProperties?: Record<string, unknown>;
+  };
+}
+
+interface MarkdownNodeProps {
+  node?: { tagName?: string };
+}
+
+type HeadingProps = React.HTMLAttributes<HTMLHeadingElement> & MarkdownNodeProps & {
+  children?: React.ReactNode;
+};
+
+type ParagraphProps = React.HTMLAttributes<HTMLParagraphElement> & MarkdownNodeProps & {
+  children?: React.ReactNode;
+};
+
+type ListItemProps = React.LiHTMLAttributes<HTMLLIElement> & MarkdownNodeProps & {
+  children?: React.ReactNode;
+};
+
+type TableCellProps = React.TdHTMLAttributes<HTMLTableCellElement> & MarkdownNodeProps & {
+  children?: React.ReactNode;
+};
+
+type TableHeaderProps = React.ThHTMLAttributes<HTMLTableHeaderCellElement> & MarkdownNodeProps & {
+  children?: React.ReactNode;
+};
+
+type MarkdownLinkProps = React.AnchorHTMLAttributes<HTMLAnchorElement> & MarkdownNodeProps & {
+  children?: React.ReactNode;
+  href?: string;
+};
+
 function slugifyHeadingText(text: string): string {
   const normalized = text
     .trim()
@@ -31,21 +70,45 @@ function slugifyHeadingText(text: string): string {
   return normalized || 'section';
 }
 
-function collectText(children: React.ReactNode): string {
+function collectMarkdownAstText(node?: MarkdownAstNode): string {
+  if (!node) return '';
+
   let result = '';
-
-  React.Children.forEach(children, (child) => {
-    if (typeof child === 'string' || typeof child === 'number') {
-      result += String(child);
-      return;
-    }
-
-    if (React.isValidElement<{ children?: React.ReactNode }>(child) && child.props.children) {
-      result += collectText(child.props.children);
-    }
-  });
+  if (typeof node.value === 'string') result += node.value;
+  if (typeof node.alt === 'string') result += node.alt;
+  if (Array.isArray(node.children)) {
+    node.children.forEach((child) => {
+      result += collectMarkdownAstText(child);
+    });
+  }
 
   return result;
+}
+
+function walkMarkdownAst(node: MarkdownAstNode | undefined, visit: (node: MarkdownAstNode) => void): void {
+  if (!node) return;
+  visit(node);
+  if (!Array.isArray(node.children)) return;
+  node.children.forEach((child) => walkMarkdownAst(child, visit));
+}
+
+function remarkStableHeadingIds() {
+  return (tree: MarkdownAstNode) => {
+    const headingSlugCounts = new Map<string, number>();
+
+    walkMarkdownAst(tree, (node) => {
+      if (node.type !== 'heading') return;
+
+      const baseSlug = slugifyHeadingText(collectMarkdownAstText(node));
+      const seenCount = headingSlugCounts.get(baseSlug) ?? 0;
+      headingSlugCounts.set(baseSlug, seenCount + 1);
+      const id = seenCount === 0 ? baseSlug : `${baseSlug}-${seenCount}`;
+
+      node.data ??= {};
+      node.data.hProperties ??= {};
+      node.data.hProperties.id = id;
+    });
+  };
 }
 
 function highlightText(text: string, query: string): React.ReactNode {
@@ -116,8 +179,24 @@ function decodeWorkspacePathLink(href: string): string {
   }
 }
 
+function splitWorkspaceLinkTarget(href: string): { path: string; fragment: string | null } {
+  const trimmed = href.trim();
+  const hashIndex = trimmed.indexOf('#');
+  const rawPath = hashIndex >= 0 ? trimmed.slice(0, hashIndex) : trimmed;
+  const rawFragment = hashIndex >= 0 ? trimmed.slice(hashIndex + 1) : '';
+
+  return {
+    path: decodeWorkspacePathLink(rawPath).trim(),
+    fragment: rawFragment ? decodeWorkspacePathLink(rawFragment).trim() : null,
+  };
+}
+
 function normalizeWorkspaceLinkTarget(href: string): string {
-  return decodeWorkspacePathLink(href).trim();
+  return splitWorkspaceLinkTarget(href).path;
+}
+
+function getWorkspaceLinkFragment(href: string): string | null {
+  return splitWorkspaceLinkTarget(href).fragment;
 }
 
 function CodeBlock({ code, language, highlightedHtml }: {
@@ -159,41 +238,56 @@ export function MarkdownRenderer({
       : undefined,
   }), [searchQuery, pathLinkPrefixes, onOpenWorkspacePath]);
 
-  const scrollToAnchor = useCallback((href: string) => {
-    const rawAnchor = href.replace(/^#/, '').trim();
-    if (!rawAnchor) return;
-
-    const anchorId = decodeWorkspacePathLink(rawAnchor);
+  const scrollToAnchorId = useCallback((anchorId: string, behavior: ScrollBehavior = 'smooth') => {
     const root = containerRef.current;
-    if (!root) return;
+    if (!root || !anchorId) return false;
 
     const escapedAnchorId = typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
       ? CSS.escape(anchorId)
       : anchorId.replace(/([ #;?%&,.+*~':"!^$[\]()=>|/@])/g, '\\$1');
 
     const target = root.querySelector<HTMLElement>(`#${escapedAnchorId}, a[name="${escapedAnchorId}"]`);
-    if (!target) return;
+    if (!target) return false;
 
-    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    target.scrollIntoView({ behavior, block: 'start' });
+    return true;
+  }, []);
 
+  const updateLocationHash = useCallback((anchorId: string) => {
     if (typeof window !== 'undefined' && window.history?.replaceState) {
       window.history.replaceState(null, '', `#${anchorId}`);
     }
   }, []);
 
-  const headingSlugCounts = new Map<string, number>();
-  const buildHeadingId = (children: React.ReactNode) => {
-    const baseSlug = slugifyHeadingText(collectText(children));
-    const seenCount = headingSlugCounts.get(baseSlug) ?? 0;
-    headingSlugCounts.set(baseSlug, seenCount + 1);
-    return seenCount === 0 ? baseSlug : `${baseSlug}-${seenCount}`;
-  };
+  const scrollToAnchor = useCallback((href: string, behavior: ScrollBehavior = 'smooth') => {
+    const rawAnchor = href.replace(/^#/, '').trim();
+    if (!rawAnchor) return false;
+
+    const anchorId = decodeWorkspacePathLink(rawAnchor);
+    const didScroll = scrollToAnchorId(anchorId, behavior);
+    if (didScroll) {
+      updateLocationHash(anchorId);
+    }
+    return didScroll;
+  }, [scrollToAnchorId, updateLocationHash]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const rawHash = window.location.hash.replace(/^#/, '').trim();
+    if (!rawHash) return undefined;
+
+    const frame = window.requestAnimationFrame(() => {
+      scrollToAnchor(`#${rawHash}`, 'auto');
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [content, currentDocumentPath, scrollToAnchor]);
 
   const components = useMemo(() => {
     const createHeading = (Tag: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6') =>
-      ({ children }: { children?: React.ReactNode }) => {
-        const id = buildHeadingId(children);
-        return <Tag id={id}>{processChildren(children, childOptions)}</Tag>;
+      ({ children, node, ...props }: HeadingProps) => {
+        void node;
+        return <Tag {...props}>{processChildren(children, childOptions)}</Tag>;
       };
 
     return {
@@ -203,18 +297,22 @@ export function MarkdownRenderer({
       h4: createHeading('h4'),
       h5: createHeading('h5'),
       h6: createHeading('h6'),
-      p: ({ children }: { children?: React.ReactNode }) => (
-        <p>{processChildren(children, childOptions)}</p>
-      ),
-      li: ({ children }: { children?: React.ReactNode }) => (
-        <li>{processChildren(children, childOptions)}</li>
-      ),
-      td: ({ children }: { children?: React.ReactNode }) => (
-        <td>{processChildren(children, childOptions)}</td>
-      ),
-      th: ({ children }: { children?: React.ReactNode }) => (
-        <th>{processChildren(children, childOptions)}</th>
-      ),
+      p: ({ children, node, ...props }: ParagraphProps) => {
+        void node;
+        return <p {...props}>{processChildren(children, childOptions)}</p>;
+      },
+      li: ({ children, node, ...props }: ListItemProps) => {
+        void node;
+        return <li {...props}>{processChildren(children, childOptions)}</li>;
+      },
+      td: ({ children, node, ...props }: TableCellProps) => {
+        void node;
+        return <td {...props}>{processChildren(children, childOptions)}</td>;
+      },
+      th: ({ children, node, ...props }: TableHeaderProps) => {
+        void node;
+        return <th {...props}>{processChildren(children, childOptions)}</th>;
+      },
       code: ({ className: codeClassName, children, ...props }: { className?: string; children?: React.ReactNode }) => {
         const match = /language-(\w+)/.exec(codeClassName || '');
         const lang = match ? match[1] : '';
@@ -250,16 +348,20 @@ export function MarkdownRenderer({
           <table className="markdown-table">{children}</table>
         </div>
       ),
-      a: ({ children, href }: { children?: React.ReactNode; href?: string }) => {
+      a: ({ children, href, className: linkClassName, node, ...props }: MarkdownLinkProps) => {
+        void node;
         if (!href) {
           return <span>{children}</span>;
         }
 
+        const mergedClassName = [linkClassName, 'markdown-link'].filter(Boolean).join(' ');
+
         if (href.trim().startsWith('#')) {
           return (
             <a
+              {...props}
               href={href}
-              className="markdown-link"
+              className={mergedClassName}
               onClick={(event) => {
                 event.preventDefault();
                 scrollToAnchor(href);
@@ -272,15 +374,23 @@ export function MarkdownRenderer({
 
         if (onOpenWorkspacePath && isWorkspacePathLink(href)) {
           const normalizedTarget = normalizeWorkspaceLinkTarget(href);
+          const fragment = getWorkspaceLinkFragment(href);
           return (
             <a
+              {...props}
               href={href}
-              className="markdown-link"
+              className={mergedClassName}
               onClick={(event) => {
                 event.preventDefault();
-                Promise.resolve(onOpenWorkspacePath(normalizedTarget, currentDocumentPath)).catch((error) => {
-                  console.error('Failed to open workspace path link:', error);
-                });
+                Promise.resolve(onOpenWorkspacePath(normalizedTarget, currentDocumentPath))
+                  .then(() => {
+                    if (fragment) {
+                      updateLocationHash(fragment);
+                    }
+                  })
+                  .catch((error) => {
+                    console.error('Failed to open workspace path link:', error);
+                  });
               }}
             >
               {children}
@@ -289,18 +399,24 @@ export function MarkdownRenderer({
         }
 
         return (
-          <a href={href} target="_blank" rel="noopener noreferrer" className="markdown-link">
+          <a
+            {...props}
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={mergedClassName}
+          >
             {children}
           </a>
         );
       },
       ...(suppressImages ? { img: () => null } : {}),
     };
-  }, [buildHeadingId, childOptions, currentDocumentPath, onOpenWorkspacePath, scrollToAnchor, suppressImages]);
+  }, [childOptions, currentDocumentPath, onOpenWorkspacePath, scrollToAnchor, suppressImages, updateLocationHash]);
 
   return (
     <div ref={containerRef} className={`markdown-content ${className}`}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkStableHeadingIds]} components={components}>
         {content}
       </ReactMarkdown>
     </div>
