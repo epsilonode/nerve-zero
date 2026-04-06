@@ -25,7 +25,7 @@ const file: OpenFile = {
 };
 
 describe('MarkdownDocumentView', () => {
-  it('renders preview mode without a nested card or horizontal padding shell', () => {
+  it('renders preview mode with light full-width gutters and no nested card', () => {
     render(
       <MarkdownDocumentView
         file={file}
@@ -37,7 +37,7 @@ describe('MarkdownDocumentView', () => {
 
     const renderer = screen.getByTestId('markdown-renderer');
     expect(renderer.closest('article')).toBeNull();
-    expect(renderer.parentElement).not.toHaveClass('px-5');
-    expect(renderer.parentElement).not.toHaveClass('md:px-6');
+    expect(renderer.parentElement).toHaveClass('px-4');
+    expect(renderer.parentElement).toHaveClass('md:px-6');
   });
 });
