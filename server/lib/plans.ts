@@ -36,17 +36,13 @@ function parsePlanContent(content: string): {
   };
   body: string;
 } {
-  if (!content.startsWith('---\n')) {
+  const frontmatterMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  if (!frontmatterMatch) {
     return { frontmatter: {}, body: content };
   }
 
-  const end = content.indexOf('\n---\n', 4);
-  if (end === -1) {
-    return { frontmatter: {}, body: content };
-  }
-
-  const rawFrontmatter = content.slice(4, end);
-  const body = content.slice(end + 5);
+  const rawFrontmatter = frontmatterMatch[1] ?? '';
+  const body = content.slice(frontmatterMatch[0].length);
   const frontmatter: {
     plan_id?: string;
     plan_title?: string;

@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import { AlertTriangle, ArrowUpRight, CircleDot, FileText, GitBranch, Loader2 } from 'lucide-react';
 import { MarkdownRenderer } from '@/features/markdown/MarkdownRenderer';
 import { useBeadDetail } from './useBeadDetail';
@@ -65,6 +66,22 @@ function RelationList({
 export function BeadViewerTab({ beadTarget, onOpenBeadId, onOpenWorkspacePath }: BeadViewerTabProps) {
   const { bead, loading, error } = useBeadDetail(beadTarget);
 
+  const openBeadWithContext = useCallback((target: BeadLinkTarget) => {
+    if (!onOpenBeadId) return;
+    return onOpenBeadId({
+      beadId: target.beadId,
+      explicitTargetPath: target.explicitTargetPath ?? beadTarget.explicitTargetPath,
+      currentDocumentPath: target.currentDocumentPath ?? beadTarget.currentDocumentPath,
+      workspaceAgentId: target.workspaceAgentId ?? beadTarget.workspaceAgentId,
+    });
+  }, [beadTarget.currentDocumentPath, beadTarget.explicitTargetPath, beadTarget.workspaceAgentId, onOpenBeadId]);
+
+  const openLinkedPlan = useCallback(async () => {
+    if (!onOpenWorkspacePath || !bead?.linkedPlan) return;
+    const planPath = bead.linkedPlan.workspacePath ?? bead.linkedPlan.path;
+    await onOpenWorkspacePath(planPath);
+  }, [bead?.linkedPlan, onOpenWorkspacePath]);
+
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
@@ -120,7 +137,9 @@ export function BeadViewerTab({ beadTarget, onOpenBeadId, onOpenWorkspacePath }:
               </div>
               <MarkdownRenderer
                 content={bead.notes}
-                onOpenBeadId={onOpenBeadId}
+                currentDocumentPath={beadTarget.currentDocumentPath}
+                workspaceAgentId={beadTarget.workspaceAgentId}
+                onOpenBeadId={openBeadWithContext}
                 onOpenWorkspacePath={onOpenWorkspacePath}
               />
             </div>
@@ -142,7 +161,11 @@ export function BeadViewerTab({ beadTarget, onOpenBeadId, onOpenWorkspacePath }:
             <button
               type="button"
               className="flex w-full items-start justify-between gap-3 rounded-2xl border border-border/60 bg-card/60 px-4 py-4 text-left transition-colors hover:border-primary/40 hover:bg-card disabled:cursor-default disabled:opacity-75"
-              onClick={() => { void onOpenWorkspacePath?.(bead.linkedPlan!.path); }}
+              onClick={() => {
+                void openLinkedPlan().catch((error) => {
+                  console.error('Failed to open linked plan:', error);
+                });
+              }}
               disabled={!onOpenWorkspacePath}
             >
               <div className="min-w-0 space-y-1">
@@ -158,8 +181,8 @@ export function BeadViewerTab({ beadTarget, onOpenBeadId, onOpenWorkspacePath }:
           </section>
         ) : null}
 
-        <RelationList title="Dependencies" items={bead.dependencies} onOpenBeadId={onOpenBeadId} />
-        <RelationList title="Dependents" items={bead.dependents} onOpenBeadId={onOpenBeadId} />
+        <RelationList title="Dependencies" items={bead.dependencies} onOpenBeadId={openBeadWithContext} />
+        <RelationList title="Dependents" items={bead.dependents} onOpenBeadId={openBeadWithContext} />
       </div>
     </div>
   );

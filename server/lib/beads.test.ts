@@ -16,7 +16,7 @@ vi.mock('./agent-workspace.js', () => ({
   })),
 }));
 
-import { BeadValidationError, resolveBeadLookupRepoRoot } from './beads.js';
+import { BeadValidationError, getBeadDetail, resolveBeadLookupRepoRoot } from './beads.js';
 
 describe('resolveBeadLookupRepoRoot', () => {
   beforeEach(() => {
@@ -29,12 +29,16 @@ describe('resolveBeadLookupRepoRoot', () => {
     cwdSpy.mockRestore();
   });
 
-  it('uses explicit absolute repo roots directly', () => {
-    expect(resolveBeadLookupRepoRoot({ targetPath: '/repos/demo' })).toBe('/repos/demo');
+  it('uses explicit absolute repo roots directly when they stay within the workspace', () => {
+    expect(resolveBeadLookupRepoRoot({ targetPath: '/workspace/repos/demo' })).toBe('/workspace/repos/demo');
   });
 
   it('normalizes explicit .beads targets to the owning repo root', () => {
-    expect(resolveBeadLookupRepoRoot({ targetPath: '/repos/demo/.beads' })).toBe('/repos/demo');
+    expect(resolveBeadLookupRepoRoot({ targetPath: '/workspace/repos/demo/.beads' })).toBe('/workspace/repos/demo');
+  });
+
+  it('rejects explicit absolute targets outside the workspace root', () => {
+    expect(() => resolveBeadLookupRepoRoot({ targetPath: '/repos/demo' })).toThrow(BeadValidationError);
   });
 
   it('resolves relative explicit targets against the current markdown document directory', () => {
@@ -52,7 +56,27 @@ describe('resolveBeadLookupRepoRoot', () => {
     })).toBe(path.resolve('/workspace-research', 'notes/repos/demo'));
   });
 
+  it('rejects absolute current document paths outside the workspace root', () => {
+    expect(() => resolveBeadLookupRepoRoot({
+      targetPath: './repos/demo',
+      currentDocumentPath: '/tmp/beads.md',
+    })).toThrow(BeadValidationError);
+  });
+
+  it('rejects resolved repo roots that escape the workspace root', () => {
+    expect(() => resolveBeadLookupRepoRoot({
+      targetPath: '../../../outside-repo',
+      currentDocumentPath: 'docs/specs/links.md',
+    })).toThrow(BeadValidationError);
+  });
+
   it('rejects relative explicit targets when no current document path is available', () => {
     expect(() => resolveBeadLookupRepoRoot({ targetPath: '../projects/demo' })).toThrow(BeadValidationError);
+  });
+});
+
+describe('getBeadDetail', () => {
+  it('rejects blank bead ids as validation errors', async () => {
+    await expect(getBeadDetail('   ')).rejects.toBeInstanceOf(BeadValidationError);
   });
 });

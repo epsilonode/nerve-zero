@@ -99,11 +99,12 @@ export function buildBeadTabId(target: BeadLinkTarget | string): string {
     return `bead:${target}`;
   }
 
+  const workspaceAgentId = target.workspaceAgentId?.trim() || 'main';
+
   if (!target.explicitTargetPath) {
-    return `bead:${target.beadId}`;
+    return `bead:${workspaceAgentId}:${target.beadId}`;
   }
 
-  const workspaceAgentId = target.workspaceAgentId?.trim() || 'main';
   const currentDocumentPath = target.currentDocumentPath?.trim() || '';
   return `bead://${workspaceAgentId}:${currentDocumentPath}:${target.explicitTargetPath}#${target.beadId}`;
 }

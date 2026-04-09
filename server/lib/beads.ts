@@ -43,6 +43,7 @@ export interface BeadRelationSummary {
 
 export interface BeadLinkedPlanSummary {
   path: string;
+  workspacePath: string | null;
   title: string;
   planId: string | null;
   archived: boolean;
@@ -180,14 +181,30 @@ function normalizeBeadRepoRoot(repoRoot: string): string {
   return path.basename(trimmed) === '.beads' ? path.dirname(trimmed) : trimmed;
 }
 
+function isPathWithinRoot(candidatePath: string, rootPath: string): boolean {
+  const normalizedCandidate = path.resolve(candidatePath);
+  const normalizedRoot = path.resolve(rootPath);
+  const relative = path.relative(normalizedRoot, normalizedCandidate);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function assertPathWithinWorkspace(candidatePath: string, workspaceRoot: string, label: string): string {
+  const normalizedCandidate = path.resolve(candidatePath);
+  if (!isPathWithinRoot(normalizedCandidate, workspaceRoot)) {
+    throw new BeadValidationError(`${label} must stay within the workspace root`);
+  }
+  return normalizedCandidate;
+}
+
 export function resolveBeadLookupRepoRoot(options: BeadLookupOptions = {}): string {
   if (!options.targetPath?.trim()) {
     return process.cwd();
   }
 
+  const workspaceRoot = resolveAgentWorkspace(options.workspaceAgentId).workspaceRoot;
   const targetPath = options.targetPath.trim();
   if (path.isAbsolute(targetPath)) {
-    return normalizeBeadRepoRoot(path.normalize(targetPath));
+    return normalizeBeadRepoRoot(assertPathWithinWorkspace(targetPath, workspaceRoot, 'Explicit bead target path'));
   }
 
   const currentDocumentPath = options.currentDocumentPath?.trim();
@@ -195,18 +212,22 @@ export function resolveBeadLookupRepoRoot(options: BeadLookupOptions = {}): stri
     throw new BeadValidationError('Relative explicit bead URIs require a current document path');
   }
 
-  const workspaceRoot = resolveAgentWorkspace(options.workspaceAgentId).workspaceRoot;
-  const absoluteDocumentPath = path.isAbsolute(currentDocumentPath)
-    ? currentDocumentPath
-    : path.resolve(workspaceRoot, currentDocumentPath);
+  const absoluteDocumentPath = assertPathWithinWorkspace(
+    path.isAbsolute(currentDocumentPath)
+      ? currentDocumentPath
+      : path.resolve(workspaceRoot, currentDocumentPath),
+    workspaceRoot,
+    'Current document path',
+  );
 
-  return normalizeBeadRepoRoot(path.resolve(path.dirname(absoluteDocumentPath), targetPath));
+  const repoRoot = normalizeBeadRepoRoot(path.resolve(path.dirname(absoluteDocumentPath), targetPath));
+  return assertPathWithinWorkspace(repoRoot, workspaceRoot, 'Resolved bead repo root');
 }
 
 export async function getBeadDetail(beadId: string, options: BeadLookupOptions = {}): Promise<BeadDetail> {
   const normalizedBeadId = beadId.trim();
   if (!normalizedBeadId) {
-    throw new BeadNotFoundError(beadId);
+    throw new BeadValidationError('Bead id is required');
   }
 
   const repoRoot = resolveBeadLookupRepoRoot(options);
@@ -254,6 +275,17 @@ export async function getBeadDetail(beadId: string, options: BeadLookupOptions =
   }
 
   const linkedPlan = await findRepoPlanByBeadId(normalizedBeadId, repoRoot);
+  const workspaceRoot = resolveAgentWorkspace(options.workspaceAgentId).workspaceRoot;
+  const linkedPlanWorkspacePath = linkedPlan
+    ? (() => {
+      const absoluteLinkedPlanPath = path.resolve(repoRoot, linkedPlan.path);
+      if (!isPathWithinRoot(absoluteLinkedPlanPath, workspaceRoot)) {
+        return null;
+      }
+      const relativePath = path.relative(workspaceRoot, absoluteLinkedPlanPath).split(path.sep).join('/');
+      return relativePath && relativePath !== '.' ? relativePath : null;
+    })()
+    : null;
 
   return {
     id: normalizeString(raw.id) ?? normalizedBeadId,
@@ -271,6 +303,7 @@ export async function getBeadDetail(beadId: string, options: BeadLookupOptions =
     dependents: normalizeRelations(raw.dependents),
     linkedPlan: linkedPlan ? {
       path: linkedPlan.path,
+      workspacePath: linkedPlanWorkspacePath,
       title: linkedPlan.title,
       planId: linkedPlan.planId,
       archived: linkedPlan.archived,

@@ -20,6 +20,11 @@ describe('bead link helpers', () => {
     expect(buildBeadTabId('nerve-fms2')).toBe('bead:nerve-fms2');
   });
 
+  it('builds workspace-aware tab ids for shorthand bead tabs', () => {
+    expect(buildBeadTabId({ beadId: 'nerve-fms2', workspaceAgentId: 'research' })).toBe('bead:research:nerve-fms2');
+    expect(buildBeadTabId({ beadId: 'nerve-fms2' })).toBe('bead:main:nerve-fms2');
+  });
+
   it('parses explicit absolute bead URIs with custom payload parsing', () => {
     expect(parseBeadLinkHref('bead:///home/alice/work/repos/demo/.beads#nerve-fms2')).toEqual({
       beadId: 'nerve-fms2',

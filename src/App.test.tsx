@@ -676,6 +676,28 @@ describe('App bead tab workspace scoping', () => {
     expect(screen.getByTestId('workspace-agent')).toHaveTextContent('alpha');
     expect(screen.getByTestId('open-beads')).toHaveTextContent('nerve-fms2');
   });
+
+  it('creates distinct shorthand bead tabs per workspace instead of deduping across hidden tabs', () => {
+    const { rerender } = render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open bead viewer' }));
+    expect(screen.getByTestId('open-beads')).toHaveTextContent('nerve-fms2');
+
+    sessionContext.currentSession = 'agent:bravo:main';
+    rerender(<App />);
+    expect(screen.getByTestId('open-beads')).toHaveTextContent('');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open bead viewer' }));
+    expect(screen.getByTestId('open-beads')).toHaveTextContent('nerve-fms2');
+
+    sessionContext.currentSession = 'agent:alpha:main';
+    rerender(<App />);
+    expect(screen.getByTestId('open-beads')).toHaveTextContent('nerve-fms2');
+
+    sessionContext.currentSession = 'agent:bravo:main';
+    rerender(<App />);
+    expect(screen.getByTestId('open-beads')).toHaveTextContent('nerve-fms2');
+  });
 });
 
 describe('App workspace switch guard', () => {

@@ -7,6 +7,7 @@ export interface BeadRelationSummary {
 
 export interface BeadLinkedPlanSummary {
   path: string;
+  workspacePath: string | null;
   title: string;
   planId: string | null;
   archived: boolean;
