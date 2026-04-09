@@ -27,6 +27,13 @@ export class BeadAdapterError extends Error {
   }
 }
 
+export class BeadValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BeadValidationError';
+  }
+}
+
 export interface BeadRelationSummary {
   id: string;
   title: string | null;
@@ -185,7 +192,7 @@ export function resolveBeadLookupRepoRoot(options: BeadLookupOptions = {}): stri
 
   const currentDocumentPath = options.currentDocumentPath?.trim();
   if (!currentDocumentPath) {
-    throw new BeadAdapterError('Relative explicit bead URIs require a current document path');
+    throw new BeadValidationError('Relative explicit bead URIs require a current document path');
   }
 
   const workspaceRoot = resolveAgentWorkspace(options.workspaceAgentId).workspaceRoot;

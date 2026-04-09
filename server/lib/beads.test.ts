@@ -16,7 +16,7 @@ vi.mock('./agent-workspace.js', () => ({
   })),
 }));
 
-import { BeadAdapterError, resolveBeadLookupRepoRoot } from './beads.js';
+import { BeadValidationError, resolveBeadLookupRepoRoot } from './beads.js';
 
 describe('resolveBeadLookupRepoRoot', () => {
   beforeEach(() => {
@@ -53,6 +53,6 @@ describe('resolveBeadLookupRepoRoot', () => {
   });
 
   it('rejects relative explicit targets when no current document path is available', () => {
-    expect(() => resolveBeadLookupRepoRoot({ targetPath: '../projects/demo' })).toThrow(BeadAdapterError);
+    expect(() => resolveBeadLookupRepoRoot({ targetPath: '../projects/demo' })).toThrow(BeadValidationError);
   });
 });

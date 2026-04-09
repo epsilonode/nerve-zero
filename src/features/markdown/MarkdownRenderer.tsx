@@ -393,7 +393,11 @@ export function MarkdownRenderer({
               className={mergedClassName}
               onClick={(event) => {
                 event.preventDefault();
-                void onOpenBeadId(beadTarget);
+                Promise.resolve()
+                  .then(() => onOpenBeadId(beadTarget))
+                  .catch((error) => {
+                    console.error('Failed to open bead link:', error);
+                  });
               }}
             >
               {children}

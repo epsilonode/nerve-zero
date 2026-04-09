@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { rateLimitGeneral } from '../middleware/rate-limit.js';
-import { BeadAdapterError, BeadNotFoundError, getBeadDetail } from '../lib/beads.js';
+import { BeadAdapterError, BeadNotFoundError, BeadValidationError, getBeadDetail } from '../lib/beads.js';
 
 const app = new Hono();
 
@@ -22,6 +22,9 @@ app.get('/api/beads/:id', rateLimitGeneral, async (c) => {
     });
     return c.json({ ok: true, bead });
   } catch (error) {
+    if (error instanceof BeadValidationError) {
+      return c.json({ error: 'invalid_request', details: error.message }, 400);
+    }
     if (error instanceof BeadNotFoundError) {
       return c.json({ error: 'not_found', details: error.message }, 404);
     }

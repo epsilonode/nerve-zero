@@ -309,16 +309,52 @@ describe('MarkdownRenderer', () => {
     consoleError.mockRestore();
   });
 
-  it('opens explicit bead-scheme links in-app when a bead handler is provided', () => {
+  it('opens explicit bead-scheme links in-app when a bead handler is provided', async () => {
     const onOpenBeadId = vi.fn();
     render(<MarkdownRenderer content="[viewer](bead:nerve-fms2)" onOpenBeadId={onOpenBeadId} />);
 
     fireEvent.click(screen.getByRole('link', { name: 'viewer' }));
 
-    expect(onOpenBeadId).toHaveBeenCalledWith({ beadId: 'nerve-fms2' });
+    await waitFor(() => {
+      expect(onOpenBeadId).toHaveBeenCalledWith({ beadId: 'nerve-fms2' });
+    });
   });
 
-  it('routes explicit bead-scheme links to bead tabs before workspace resolution or browser fallback', () => {
+  it('logs and swallows rejected bead link opens', async () => {
+    const error = new Error('nope');
+    const onOpenBeadId = vi.fn().mockRejectedValueOnce(error);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    render(<MarkdownRenderer content="[viewer](bead:nerve-fms2)" onOpenBeadId={onOpenBeadId} />);
+
+    fireEvent.click(screen.getByRole('link', { name: 'viewer' }));
+
+    await waitFor(() => {
+      expect(consoleError).toHaveBeenCalledWith('Failed to open bead link:', error);
+    });
+
+    consoleError.mockRestore();
+  });
+
+  it('logs and swallows synchronous throws from bead link opens', async () => {
+    const error = new Error('boom');
+    const onOpenBeadId = vi.fn(() => {
+      throw error;
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    render(<MarkdownRenderer content="[viewer](bead:nerve-fms2)" onOpenBeadId={onOpenBeadId} />);
+
+    fireEvent.click(screen.getByRole('link', { name: 'viewer' }));
+
+    await waitFor(() => {
+      expect(consoleError).toHaveBeenCalledWith('Failed to open bead link:', error);
+    });
+
+    consoleError.mockRestore();
+  });
+
+  it('routes explicit bead-scheme links to bead tabs before workspace resolution or browser fallback', async () => {
     const onOpenBeadId = vi.fn();
     const onOpenWorkspacePath = vi.fn();
     render(
@@ -335,7 +371,9 @@ describe('MarkdownRenderer', () => {
 
     fireEvent.click(link);
 
-    expect(onOpenBeadId).toHaveBeenCalledWith({ beadId: 'nerve-fms2' });
+    await waitFor(() => {
+      expect(onOpenBeadId).toHaveBeenCalledWith({ beadId: 'nerve-fms2' });
+    });
     expect(onOpenWorkspacePath).not.toHaveBeenCalled();
   });
 
@@ -358,7 +396,7 @@ describe('MarkdownRenderer', () => {
     });
   });
 
-  it('passes explicit bead lookup context through for cross-context links', () => {
+  it('passes explicit bead lookup context through for cross-context links', async () => {
     const onOpenBeadId = vi.fn();
     render(
       <MarkdownRenderer
@@ -371,11 +409,13 @@ describe('MarkdownRenderer', () => {
 
     fireEvent.click(screen.getByRole('link', { name: 'viewer' }));
 
-    expect(onOpenBeadId).toHaveBeenCalledWith({
-      beadId: 'virtra-apex-docs-id2',
-      explicitTargetPath: '/home/derrick/.openclaw/workspace/projects/virtra-apex-docs/.beads',
-      currentDocumentPath: 'bead-link-dogfood.md',
-      workspaceAgentId: 'main',
+    await waitFor(() => {
+      expect(onOpenBeadId).toHaveBeenCalledWith({
+        beadId: 'virtra-apex-docs-id2',
+        explicitTargetPath: '/home/derrick/.openclaw/workspace/projects/virtra-apex-docs/.beads',
+        currentDocumentPath: 'bead-link-dogfood.md',
+        workspaceAgentId: 'main',
+      });
     });
   });
 
@@ -396,7 +436,7 @@ describe('MarkdownRenderer', () => {
     expect(onOpenBeadId).not.toHaveBeenCalled();
   });
 
-  it('routes relative explicit bead links in-app once current document context is available', () => {
+  it('routes relative explicit bead links in-app once current document context is available', async () => {
     const onOpenBeadId = vi.fn();
     render(
       <MarkdownRenderer
@@ -413,11 +453,13 @@ describe('MarkdownRenderer', () => {
 
     fireEvent.click(link);
 
-    expect(onOpenBeadId).toHaveBeenCalledWith({
-      beadId: 'virtra-apex-docs-id2',
-      explicitTargetPath: '../projects/virtra-apex-docs/.beads',
-      currentDocumentPath: 'notes/bead-link-dogfood.md',
-      workspaceAgentId: 'main',
+    await waitFor(() => {
+      expect(onOpenBeadId).toHaveBeenCalledWith({
+        beadId: 'virtra-apex-docs-id2',
+        explicitTargetPath: '../projects/virtra-apex-docs/.beads',
+        currentDocumentPath: 'notes/bead-link-dogfood.md',
+        workspaceAgentId: 'main',
+      });
     });
   });
 

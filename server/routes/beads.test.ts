@@ -7,6 +7,7 @@ vi.mock('../lib/beads.js', () => ({
   getBeadDetail: (...args: unknown[]) => getBeadDetailMock(...args),
   BeadNotFoundError: class BeadNotFoundError extends Error {},
   BeadAdapterError: class BeadAdapterError extends Error {},
+  BeadValidationError: class BeadValidationError extends Error {},
 }));
 
 describe('beads routes', () => {
@@ -94,6 +95,20 @@ describe('beads routes', () => {
       targetPath: '../projects/virtra-apex-docs/.beads',
       currentDocumentPath: 'bead-link-dogfood.md',
       workspaceAgentId: 'main',
+    });
+  });
+
+  it('returns 400 when the lookup request context is invalid', async () => {
+    const { BeadValidationError } = await import('../lib/beads.js');
+    getBeadDetailMock.mockRejectedValue(new BeadValidationError('Relative explicit bead URIs require a current document path'));
+
+    const app = await buildApp();
+    const res = await app.request('/api/beads/nerve-fms2');
+
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toEqual({
+      error: 'invalid_request',
+      details: 'Relative explicit bead URIs require a current document path',
     });
   });
 
