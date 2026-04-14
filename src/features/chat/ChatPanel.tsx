@@ -167,7 +167,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
     }
   }, [autoScroll]);
 
-  useEffect(scrollToBottom, [messages, stream.html, scrollToBottom]);
+  useEffect(scrollToBottom, [messages, stream.rawText, scrollToBottom]);
 
   // NOTE: Cmd+F and Escape are now handled globally in App.tsx via useKeyboardShortcuts
 
@@ -352,7 +352,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
         })}
 
         {/* Processing indicator — visible while generating, persists during streaming */}
-        {isGenerating && !stream.html && (
+        {isGenerating && !stream.rawText && (
           <ProcessingIndicator
             stage={processingStage}
             elapsedMs={processingTime}
@@ -365,9 +365,16 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
         )}
 
         {/* Streaming message with condensed activity log */}
-        {isGenerating && stream.html && (
+        {isGenerating && stream.rawText && (
           <>
-            <StreamingMessage html={stream.html} elapsedMs={processingTime} agentName={agentName} />
+            <StreamingMessage
+              rawText={stream.rawText}
+              elapsedMs={processingTime}
+              agentName={agentName}
+              onOpenWorkspacePath={onOpenWorkspacePath}
+              pathLinkPrefixes={pathLinkPrefixes}
+              onOpenBeadId={onOpenBeadId}
+            />
             {activityLog.length > 0 && (
               <div className="px-4 pb-2" style={{ paddingLeft: '2rem' }}>
                 <ActivityLog entries={activityLog} />

@@ -70,6 +70,7 @@ export interface ActivityLogEntry {
 
 export interface ChatStreamState {
   html: string;
+  rawText?: string;
   runId?: string;
   isRecovering?: boolean;
   recoveryReason?: RecoveryReason | null;
@@ -568,7 +569,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     msgHook.setAllMessages(prev => [...prev, userMsg]);
     msgHook.setMessages((prev: ChatMsg[]) => [...prev, userMsg]);
     setIsGenerating(true);
-    streamHook.setStream((prev: ChatStreamState) => ({ ...prev, html: '', runId: undefined }));
+    streamHook.setStream((prev: ChatStreamState) => ({ ...prev, html: '', rawText: '', runId: undefined }));
     streamHook.setProcessingStage('thinking');
 
     const idempotencyKey = crypto.randomUUID ? crypto.randomUUID() : 'ik-' + Date.now();

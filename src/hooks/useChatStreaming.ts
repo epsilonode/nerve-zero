@@ -26,7 +26,7 @@ interface StreamFlushState {
 // ─── Hook ───────────────────────────────────────────────────────────────────────
 
 export function useChatStreaming() {
-  const [stream, setStream] = useState<ChatStreamState>({ html: '', isRecovering: false, recoveryReason: null });
+  const [stream, setStream] = useState<ChatStreamState>({ html: '', rawText: '', isRecovering: false, recoveryReason: null });
   const [processingStage, setProcessingStage] = useState<ProcessingStage>(null);
   const [lastEventTimestamp, setLastEventTimestamp] = useState<number>(0);
   const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([]);
@@ -65,6 +65,7 @@ export function useChatStreaming() {
     setStream(prev => ({
       ...prev,
       html,
+      rawText: flush.text,
       runId: flush.runId || undefined,
     }));
   }, [clearScheduledStreamFlush]);
@@ -153,12 +154,12 @@ export function useChatStreaming() {
   /** Clear the stream HTML buffer. */
   const clearStreamBuffer = useCallback(() => {
     clearScheduledStreamFlush();
-    setStream(prev => ({ ...prev, html: '', runId: undefined }));
+    setStream(prev => ({ ...prev, html: '', rawText: '', runId: undefined }));
   }, [clearScheduledStreamFlush]);
 
   /** Reset all streaming state (for session switch). */
   const resetStreamState = useCallback(() => {
-    setStream({ html: '', isRecovering: false, recoveryReason: null });
+    setStream({ html: '', rawText: '', isRecovering: false, recoveryReason: null });
     setProcessingStage(null);
     setActivityLog([]);
     setLastEventTimestamp(0);
