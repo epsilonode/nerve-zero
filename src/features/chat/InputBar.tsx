@@ -45,7 +45,7 @@ interface InputBarProps {
 export interface InputBarHandle {
   focus: () => void;
   injectText: (text: string, mode?: 'replace' | 'append') => void;
-  addWorkspacePath: (path: string, kind: 'file' | 'directory') => Promise<void>;
+  addWorkspacePath: (path: string, kind: 'file' | 'directory', agentId?: string) => Promise<void>;
 }
 
 interface StagedAttachment {
@@ -241,11 +241,14 @@ async function importBrowserUploadsToCanonicalReferences(files: File[]): Promise
   return payload.items;
 }
 
-async function resolveWorkspacePathToCanonicalReference(targetPath: string): Promise<CanonicalUploadReference> {
+async function resolveWorkspacePathToCanonicalReference(
+  targetPath: string,
+  agentId?: string,
+): Promise<CanonicalUploadReference> {
   const response = await fetch('/api/upload-reference/resolve', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path: targetPath }),
+    body: JSON.stringify({ path: targetPath, ...(agentId ? { agentId } : {}) }),
   });
 
   const payload = await response.json().catch(() => null) as UploadReferenceResolveResponse | null;
@@ -680,7 +683,7 @@ export const InputBar = forwardRef<InputBarHandle, InputBarProps>(function Input
     });
   }, []);
 
-  const stageWorkspaceFileReference = useCallback(async (path: string) => {
+  const stageWorkspaceFileReference = useCallback(async (path: string, agentId?: string) => {
     if (!attachByPathEnabled) {
       setAttachmentError('Workspace path attachments are disabled by configuration.');
       return;
@@ -693,7 +696,7 @@ export const InputBar = forwardRef<InputBarHandle, InputBarProps>(function Input
     }
 
     setAttachmentError(null);
-    const reference = await resolveWorkspacePathToCanonicalReference(path);
+    const reference = await resolveWorkspacePathToCanonicalReference(path, agentId);
     const mimeType = reference.mimeType || inferMimeTypeFromName(reference.originalName || path);
     const syntheticFile = createServerPathBackedFile({
       name: reference.originalName,
@@ -720,7 +723,7 @@ export const InputBar = forwardRef<InputBarHandle, InputBarProps>(function Input
   useImperativeHandle(ref, () => ({
     focus: focusInput,
     injectText: injectComposerText,
-    addWorkspacePath: async (path: string, kind: 'file' | 'directory') => {
+    addWorkspacePath: async (path: string, kind: 'file' | 'directory', agentId?: string) => {
       if (kind === 'directory') {
         injectComposerText(formatWorkspacePathAddToChat({
           source: 'Workspace',
@@ -730,7 +733,7 @@ export const InputBar = forwardRef<InputBarHandle, InputBarProps>(function Input
         return;
       }
 
-      await stageWorkspaceFileReference(path);
+      await stageWorkspaceFileReference(path, agentId);
     },
   }), [focusInput, injectComposerText, stageWorkspaceFileReference]);
 
@@ -1175,35 +1178,42 @@ export const InputBar = forwardRef<InputBarHandle, InputBarProps>(function Input
       {stagedAttachments.length > 0 && (
         <div className="flex flex-col gap-2 px-4 py-2 bg-card border-t border-border">
           <div className="flex gap-2 flex-wrap">
-            {stagedAttachments.map((item) => (
-              <div key={item.id} className="relative group border border-border rounded px-2 py-1.5 bg-background min-w-[190px] max-w-[260px]">
-                <button
-                  onClick={() => removeStagedAttachment(item.id)}
-                  className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-600 text-white rounded-full flex items-center justify-center text-[10px] opacity-80 hover:opacity-100 cursor-pointer"
-                >
-                  <X size={10} />
-                </button>
+            {stagedAttachments.map((item) => {
+              const relativePathBasename = item.relativePath?.split('/').filter(Boolean).pop();
+              const showRelativePath = item.origin === 'server_path'
+                && Boolean(item.relativePath)
+                && relativePathBasename !== item.file.name;
 
-                <div className="flex items-center gap-2 pr-3">
-                  {item.previewUrl ? (
-                    <img src={item.previewUrl} alt={item.file.name} className="w-10 h-10 object-cover rounded border border-border" />
-                  ) : (
-                    <div className="w-10 h-10 rounded border border-border flex items-center justify-center bg-muted">
-                      <FileText size={14} className="text-muted-foreground" />
-                    </div>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[11px] truncate">{item.file.name}</div>
-                    <div className="text-[10px] text-muted-foreground">{formatFileSize(item.file.size)}</div>
-                    {item.origin === 'server_path' && item.relativePath && (
-                      <div className="text-[9px] mt-0.5 truncate text-muted-foreground">{item.relativePath}</div>
+              return (
+                <div key={item.id} className="relative group border border-border rounded px-2 py-1.5 bg-background min-w-[190px] max-w-[260px]">
+                  <button
+                    onClick={() => removeStagedAttachment(item.id)}
+                    className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-600 text-white rounded-full flex items-center justify-center text-[10px] opacity-80 hover:opacity-100 cursor-pointer"
+                  >
+                    <X size={10} />
+                  </button>
+
+                  <div className="flex items-center gap-2 pr-3">
+                    {item.previewUrl ? (
+                      <img src={item.previewUrl} alt={item.file.name} className="w-10 h-10 object-cover rounded border border-border" />
+                    ) : (
+                      <div className="w-10 h-10 rounded border border-border flex items-center justify-center bg-muted">
+                        <FileText size={14} className="text-muted-foreground" />
+                      </div>
                     )}
-                    <div className="text-[9px] mt-0.5 text-primary/90 uppercase">{item.origin === 'server_path' ? 'Path Ref' : 'Upload'}</div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[11px] truncate">{item.file.name}</div>
+                      <div className="text-[10px] text-muted-foreground">{formatFileSize(item.file.size)}</div>
+                      {showRelativePath && (
+                        <div className="text-[9px] mt-0.5 truncate text-muted-foreground">{item.relativePath}</div>
+                      )}
+                      <div className="text-[9px] mt-0.5 text-primary/90 uppercase">{item.origin === 'server_path' ? 'Local File' : 'Upload'}</div>
+                    </div>
                   </div>
-                </div>
 
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

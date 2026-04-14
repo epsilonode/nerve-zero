@@ -195,14 +195,17 @@ describe('FileTreePanel', () => {
   });
 
   describe('context menu add to chat', () => {
-    it('shows "Add to chat" for files and calls the callback', async () => {
+    it('shows "Add to chat" for files when file references are enabled, and calls the callback with the workspace agent', async () => {
       render(
         <FileTreePanel
+          workspaceAgentId="agent-a"
           onOpenFile={mockOnOpenFile}
           onAddToChat={mockOnAddToChat}
+          addToChatEnabled={true}
           onRemapOpenPaths={mockOnRemapOpenPaths}
           onCloseOpenPaths={mockOnCloseOpenPaths}
           collapsed={false}
+          onCollapseChange={vi.fn()}
         />
       );
 
@@ -215,7 +218,7 @@ describe('FileTreePanel', () => {
       fireEvent.click(screen.getByText('Add to chat'));
 
       await waitFor(() => {
-        expect(mockOnAddToChat).toHaveBeenCalledWith('package.json', 'file');
+        expect(mockOnAddToChat).toHaveBeenCalledWith('package.json', 'file', 'agent-a');
       });
     });
 
@@ -224,6 +227,7 @@ describe('FileTreePanel', () => {
         <FileTreePanel
           onOpenFile={mockOnOpenFile}
           onAddToChat={mockOnAddToChat}
+          addToChatEnabled={true}
           onRemapOpenPaths={mockOnRemapOpenPaths}
           onCloseOpenPaths={mockOnCloseOpenPaths}
           collapsed={false}
@@ -231,6 +235,27 @@ describe('FileTreePanel', () => {
       );
 
       fireEvent.contextMenu(screen.getByText('src'), new MouseEvent('contextmenu', { bubbles: true }));
+
+      await waitFor(() => {
+        expect(screen.queryByText('Add to chat')).not.toBeInTheDocument();
+      });
+    });
+
+    it('does not show "Add to chat" when workspace path attachments are disabled', async () => {
+      render(
+        <FileTreePanel
+          workspaceAgentId="agent-a"
+          onOpenFile={mockOnOpenFile}
+          onAddToChat={mockOnAddToChat}
+          addToChatEnabled={false}
+          onRemapOpenPaths={mockOnRemapOpenPaths}
+          onCloseOpenPaths={mockOnCloseOpenPaths}
+          collapsed={false}
+          onCollapseChange={vi.fn()}
+        />
+      );
+
+      fireEvent.contextMenu(screen.getByText('package.json'), new MouseEvent('contextmenu', { bubbles: true }));
 
       await waitFor(() => {
         expect(screen.queryByText('Add to chat')).not.toBeInTheDocument();

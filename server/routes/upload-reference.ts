@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { InvalidAgentIdError } from '../lib/agent-workspace.js';
 import { rateLimitGeneral } from '../middleware/rate-limit.js';
 import {
   importExternalUploadToCanonicalReference,
@@ -12,18 +13,21 @@ app.post('/api/upload-reference/resolve', rateLimitGeneral, async (c) => {
     const contentType = c.req.header('content-type') || '';
 
     if (contentType.includes('application/json')) {
-      const body = await c.req.json().catch(() => null) as { path?: unknown; paths?: unknown } | null;
+      const body = await c.req.json().catch(() => null) as { path?: unknown; paths?: unknown; agentId?: unknown } | null;
       const paths = Array.isArray(body?.paths)
         ? body.paths.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
         : typeof body?.path === 'string' && body.path.trim().length > 0
           ? [body.path]
           : [];
+      const agentId = typeof body?.agentId === 'string' && body.agentId.trim().length > 0
+        ? body.agentId
+        : undefined;
 
       if (paths.length === 0) {
         return c.json({ ok: false, error: 'At least one workspace path is required.' }, 400);
       }
 
-      const items = await Promise.all(paths.map((targetPath) => resolveDirectWorkspaceReference(targetPath)));
+      const items = await Promise.all(paths.map((targetPath) => resolveDirectWorkspaceReference(targetPath, agentId)));
       return c.json({ ok: true, items });
     }
 
@@ -47,11 +51,13 @@ app.post('/api/upload-reference/resolve', rateLimitGeneral, async (c) => {
     return c.json({ ok: true, items });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to resolve canonical upload reference';
-    const status = message === 'Invalid or excluded workspace path.' || message === 'Resolved attachment path is outside the workspace root.'
-      ? 403
-      : message === 'Resolved attachment path is not a file.'
-        ? 400
-        : 500;
+    const status = error instanceof InvalidAgentIdError
+      ? 400
+      : message === 'Invalid or excluded workspace path.' || message === 'Resolved attachment path is outside the workspace root.'
+        ? 403
+        : message === 'Resolved attachment path is not a file.'
+          ? 400
+          : 500;
     return c.json({ ok: false, error: message }, status);
   }
 });

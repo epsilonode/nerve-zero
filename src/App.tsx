@@ -338,6 +338,7 @@ export default function App({ onLogout }: AppProps) {
   const [chatPathLinkPrefixes, setChatPathLinkPrefixes] = useState<string[]>(
     DEFAULT_CHAT_PATH_LINKS_CONFIG.prefixes,
   );
+  const [addToChatEnabled, setAddToChatEnabled] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams({ agentId: workspaceAgentId });
@@ -365,6 +366,24 @@ export default function App({ onLogout }: AppProps) {
 
     return () => controller.abort();
   }, [workspaceAgentId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    void fetch('/api/upload-config', { signal: controller.signal })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (controller.signal.aborted) return;
+        setAddToChatEnabled(Boolean(data?.fileReferenceEnabled));
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setAddToChatEnabled(false);
+        }
+      });
+
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     if (kanbanVisible || viewMode !== 'kanban') return;
@@ -916,7 +935,8 @@ export default function App({ onLogout }: AppProps) {
               <FileTreePanel
                 workspaceAgentId={workspaceAgentId}
                 onOpenFile={openFile}
-                onAddToChat={(path, kind) => chatPanelRef.current?.addWorkspacePath(path, kind)}
+                onAddToChat={(path, kind, agentId) => chatPanelRef.current?.addWorkspacePath(path, kind, agentId ?? workspaceAgentId)}
+                addToChatEnabled={addToChatEnabled}
                 lastChangedEvent={lastChangedEvent}
                 revealRequest={revealRequest}
                 onRemapOpenPaths={remapOpenPaths}
@@ -943,7 +963,8 @@ export default function App({ onLogout }: AppProps) {
                   <FileTreePanel
                     workspaceAgentId={workspaceAgentId}
                     onOpenFile={openFile}
-                    onAddToChat={(path, kind) => chatPanelRef.current?.addWorkspacePath(path, kind)}
+                    onAddToChat={(path, kind, agentId) => chatPanelRef.current?.addWorkspacePath(path, kind, agentId ?? workspaceAgentId)}
+                    addToChatEnabled={addToChatEnabled}
                     lastChangedEvent={lastChangedEvent}
                     revealRequest={revealRequest}
                     onRemapOpenPaths={remapOpenPaths}
