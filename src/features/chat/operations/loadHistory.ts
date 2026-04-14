@@ -15,6 +15,68 @@ import { extractEditBlocks, extractWriteBlocks } from '@/features/chat/edit-bloc
 import { extractImages } from '@/features/chat/extractImages';
 import type { MessageImage } from '@/features/chat/types';
 
+function toArray<T>(value: T | T[] | undefined): T[] {
+  if (Array.isArray(value)) return value;
+  return value ? [value] : [];
+}
+
+function getFilenameFromPathish(value: string, fallback: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return fallback;
+  const segments = trimmed.split('/').filter(Boolean);
+  return segments[segments.length - 1] || fallback;
+}
+
+function imageExtensionFromMimeType(mimeType?: string): string {
+  if (!mimeType?.startsWith('image/')) return 'png';
+  const subtype = mimeType.slice('image/'.length).toLowerCase();
+  if (subtype === 'jpeg') return 'jpg';
+  return subtype || 'png';
+}
+
+function extractLegacyMessageImages(
+  message: ChatMessage,
+  options: { sessionKey?: string; timestamp: Date },
+): Array<{ url: string; alt?: string }> {
+  const extracted: Array<{ url: string; alt?: string }> = [];
+
+  for (const mediaPath of [...toArray(message.MediaPath), ...toArray(message.MediaPaths)]) {
+    const trimmedPath = mediaPath.trim();
+    if (!trimmedPath) continue;
+    extracted.push({
+      url: `/api/files?path=${encodeURIComponent(trimmedPath)}`,
+      alt: getFilenameFromPathish(trimmedPath, 'image'),
+    });
+  }
+
+  for (const mediaUrl of [...toArray(message.MediaUrl), ...toArray(message.MediaUrls)]) {
+    const trimmedUrl = mediaUrl.trim();
+    if (!trimmedUrl) continue;
+    extracted.push({
+      url: trimmedUrl,
+      alt: getFilenameFromPathish(trimmedUrl.split('?')[0] || trimmedUrl, 'image'),
+    });
+  }
+
+  if (options.sessionKey && Array.isArray(message.content)) {
+    let imageIndex = 0;
+    for (const block of message.content) {
+      if (block.type !== 'image') continue;
+      if (block.omitted) {
+        const timestampMs = options.timestamp.getTime();
+        const extension = imageExtensionFromMimeType(block.mimeType || block.source?.media_type);
+        extracted.push({
+          url: `/api/sessions/media?sessionKey=${encodeURIComponent(options.sessionKey)}&timestamp=${timestampMs}&imageIndex=${imageIndex}`,
+          alt: `message-${timestampMs}-image-${imageIndex}.${extension}`,
+        });
+      }
+      imageIndex += 1;
+    }
+  }
+
+  return extracted;
+}
+
 /** Convert an image content block (from gateway) into a MessageImage for rendering. */
 function imageBlockToMessageImage(block: ContentBlock): MessageImage | null {
   // Format 1: { type: "image", data: "base64...", mimeType: "image/jpeg" }
@@ -181,7 +243,7 @@ function splitSystemEvents(text: string): Array<{ role: 'event' | 'user'; text: 
   return segments;
 }
 
-export function splitToolCallMessage(m: ChatMessage): ChatMsg[] {
+export function splitToolCallMessage(m: ChatMessage, options: { sessionKey?: string } = {}): ChatMsg[] {
   const ts = m.timestamp || m.createdAt || m.ts || null;
   const timestamp = ts ? new Date(ts as string | number) : new Date();
 
@@ -322,6 +384,8 @@ export function splitToolCallMessage(m: ChatMessage): ChatMsg[] {
   const { cleaned: text, images: extractedImages } = isAssistant
     ? extractImages(chartCleaned)
     : { cleaned: chartCleaned, images: [] };
+  const legacyExtractedImages = extractLegacyMessageImages(m, { sessionKey: options.sessionKey, timestamp });
+  const combinedExtractedImages = [...extractedImages, ...legacyExtractedImages];
 
   // Extract image content blocks (base64 images from gateway)
   const contentImages = Array.isArray(m.content) ? extractImageBlocks(m.content as ContentBlock[]) : [];
@@ -336,7 +400,7 @@ export function splitToolCallMessage(m: ChatMessage): ChatMsg[] {
     timestamp,
     streaming: false,
     ...(charts.length > 0 ? { charts } : {}),
-    ...(extractedImages.length > 0 ? { extractedImages } : {}),
+    ...(combinedExtractedImages.length > 0 ? { extractedImages: combinedExtractedImages } : {}),
     ...(contentImages.length > 0 ? { images: contentImages } : {}),
     ...(uploadAttachments ? { uploadAttachments } : {}),
     ...(isVoice ? { isVoice: true } : {}),
@@ -468,10 +532,10 @@ export function tagIntermediateMessages(msgs: ChatMsg[]): ChatMsg[] {
  *
  * filter → split → group → tag
  */
-export function processChatMessages(messages: ChatMessage[]): ChatMsg[] {
+export function processChatMessages(messages: ChatMessage[], options: { sessionKey?: string } = {}): ChatMsg[] {
   const chatMsgs: ChatMsg[] = messages
     .filter(filterMessage)
-    .flatMap(splitToolCallMessage);
+    .flatMap((message) => splitToolCallMessage(message, options));
 
   const grouped = groupToolMessages(chatMsgs);
   const tagged = tagIntermediateMessages(grouped);
@@ -500,5 +564,5 @@ export async function loadChatHistory(params: {
   const res = await rpc('chat.history', { sessionKey, limit }) as ChatHistoryResponse;
   const msgs = res?.messages || [];
 
-  return processChatMessages(msgs);
+  return processChatMessages(msgs, { sessionKey });
 }

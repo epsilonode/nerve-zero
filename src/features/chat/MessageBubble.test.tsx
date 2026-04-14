@@ -83,4 +83,48 @@ describe('MessageBubble', () => {
       expect(container.querySelector('[data-handler-id="two"]')).toBeTruthy();
     });
   });
+
+  it('renders upload attachment metadata for user messages loaded from history', async () => {
+    const { getByText } = render(
+      <MessageBubble
+        msg={makeMessage({
+          rawText: 'Please review these.',
+          uploadAttachments: [
+            {
+              id: 'att-path',
+              origin: 'server_path',
+              mode: 'file_reference',
+              name: 'capture.mov',
+              mimeType: 'video/quicktime',
+              sizeBytes: 8_000_000,
+              reference: {
+                kind: 'local_path',
+                path: '/workspace/capture.mov',
+                uri: 'file:///workspace/capture.mov',
+              },
+              preparation: {
+                sourceMode: 'file_reference',
+                finalMode: 'file_reference',
+                outcome: 'file_reference_ready',
+                originalMimeType: 'video/quicktime',
+                originalSizeBytes: 8_000_000,
+              },
+              policy: { forwardToSubagents: true },
+            },
+          ],
+        })}
+        index={0}
+        isCollapsed={false}
+        isMemoryCollapsed={false}
+        onToggleCollapse={() => {}}
+        onToggleMemory={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(getByText('capture.mov')).toBeTruthy();
+      expect(getByText('Local File')).toBeTruthy();
+      expect(getByText('/workspace/capture.mov')).toBeTruthy();
+    });
+  });
 });
