@@ -1,4 +1,4 @@
-import { Monitor, Eye, Type, Activity, ALargeSmall, Code2 } from 'lucide-react';
+import { Monitor, Eye, Type, Activity, ALargeSmall, Code2, Columns3 } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { InlineSelect } from '@/components/ui/InlineSelect';
 import { useSettings } from '@/contexts/SettingsContext';
@@ -49,6 +49,8 @@ export function AppearanceSettings() {
     toggleLog,
     showHiddenWorkspaceEntries,
     toggleShowHiddenWorkspaceEntries,
+    kanbanVisible,
+    toggleKanbanVisible,
     theme,
     setTheme,
     font,
@@ -205,6 +207,22 @@ export function AppearanceSettings() {
           checked={showHiddenWorkspaceEntries}
           onCheckedChange={toggleShowHiddenWorkspaceEntries}
           aria-label="Toggle hidden workspace entries visibility"
+        />
+      </div>
+
+      {/* Workspace Kanban Visibility */}
+      <div className="cockpit-row items-start justify-between">
+        <div className="flex items-center gap-3">
+          <Columns3 size={14} className={kanbanVisible ? 'text-primary' : 'text-muted-foreground'} aria-hidden="true" />
+          <div className="flex flex-col">
+            <span className="text-sm font-medium text-foreground" id="kanban-label">Show workspace tasks</span>
+            <span className="text-xs text-muted-foreground">Toggle the Kanban view inside the workspace tabs.</span>
+          </div>
+        </div>
+        <Switch
+          checked={kanbanVisible}
+          onCheckedChange={toggleKanbanVisible}
+          aria-label="Toggle workspace kanban visibility"
         />
       </div>
 

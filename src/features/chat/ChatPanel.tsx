@@ -7,11 +7,11 @@ import { SearchBar } from './SearchBar';
 import { useMessageSearch } from './useMessageSearch';
 import { ActivityLog, ChatHeader, ProcessingIndicator, ScrollToBottomButton, StreamingMessage, ToolGroupBlock } from './components';
 import { isMessageCollapsible } from './types';
-import type { ChatMsg, ImageAttachment } from './types';
+import type { ChatMsg, ImageAttachment, OutgoingUploadPayload } from './types';
 
 interface ChatPanelProps {
   messages: ChatMsg[];
-  onSend: (text: string, attachments?: ImageAttachment[]) => void;
+  onSend: (text: string, attachments?: ImageAttachment[], uploadPayload?: OutgoingUploadPayload) => void | Promise<void>;
   onAbort: () => void;
   isGenerating: boolean;
   stream: ChatStreamState;
@@ -43,10 +43,13 @@ interface ChatPanelProps {
   isMobileTopBarHidden?: boolean;
   /** Open or reveal a safe workspace path in the file explorer/editor. */
   onOpenWorkspacePath?: (path: string) => void | Promise<void>;
+  /** Configured path prefixes that should render as clickable inline path links. */
+  pathLinkPrefixes?: string[];
 }
 
 export interface ChatPanelHandle {
   focusInput: () => void;
+  addWorkspacePath: (path: string, kind: 'file' | 'directory', agentId?: string) => Promise<void>;
 }
 
 /** Main chat panel with message list, infinite scroll, search, and input bar. */
@@ -59,6 +62,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   loadMore, hasMore = false, onToggleFileBrowser, isFileBrowserCollapsed = true,
   onToggleMobileTopBar, isMobileTopBarHidden = false,
   onOpenWorkspacePath,
+  pathLinkPrefixes,
 }, ref) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const messageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
@@ -116,7 +120,10 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
 
   // Expose focusInput to parent
   useImperativeHandle(ref, () => ({
-    focusInput: () => inputBarRef.current?.focus()
+    focusInput: () => inputBarRef.current?.focus(),
+    addWorkspacePath: async (path: string, kind: 'file' | 'directory', agentId?: string) => {
+      await inputBarRef.current?.addWorkspacePath(path, kind, agentId);
+    },
   }), []);
 
   // Clean up stale messageRefs when messages change
@@ -333,6 +340,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
                 isCurrentMatch={isCurrentMatch}
                 agentName={agentName}
                 onOpenWorkspacePath={onOpenWorkspacePath}
+                pathLinkPrefixes={pathLinkPrefixes}
               />
             </div>
           );

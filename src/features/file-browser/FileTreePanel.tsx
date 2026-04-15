@@ -6,7 +6,7 @@
  */
 
 import { useRef, useState, useCallback, useEffect } from 'react';
-import { PanelLeftClose, RefreshCw, Pencil, Trash2, RotateCcw, X } from 'lucide-react';
+import { PanelLeftClose, RefreshCw, Pencil, Trash2, RotateCcw, X, Paperclip } from 'lucide-react';
 import { FileTreeNode } from './FileTreeNode';
 import { useFileTree } from './hooks/useFileTree';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
@@ -59,6 +59,8 @@ export interface FileTreeChangeEvent {
 interface FileTreePanelProps {
   workspaceAgentId: string;
   onOpenFile: (path: string) => void;
+  onAddToChat?: (path: string, kind: 'file' | 'directory', agentId?: string) => Promise<void> | void;
+  addToChatEnabled?: boolean;
   onRemapOpenPaths?: (fromPath: string, toPath: string, targetAgentId?: string) => void;
   onCloseOpenPaths?: (pathPrefix: string, targetAgentId?: string) => void;
   /** Called externally when a file changes (SSE) — refreshes affected directory. */
@@ -100,6 +102,8 @@ function isSameScopedSession<T extends ScopedSessionState>(current: T | null, ta
 export function FileTreePanel({
   workspaceAgentId = 'main',
   onOpenFile,
+  onAddToChat,
+  addToChatEnabled = false,
   onRemapOpenPaths,
   onCloseOpenPaths,
   lastChangedEvent,
@@ -669,6 +673,16 @@ export function FileTreePanel({
   const menuPath = menuEntry?.path || '';
   const menuInTrash = isTrashItemPath(menuPath);
   const showRestore = menuInTrash;
+  const showAddToChat = Boolean(
+    onAddToChat
+    && menuEntry
+    && !menuPath.startsWith('.trash')
+    && menuPath !== '.trash'
+    && (
+      menuEntry.type === 'directory'
+      || (menuEntry.type === 'file' && addToChatEnabled)
+    ),
+  );
   const showRename = Boolean(menuEntry && menuPath !== '.trash');
   const showTrashAction = Boolean(menuEntry && !menuPath.startsWith('.trash') && menuPath !== '.trash');
 
@@ -793,6 +807,29 @@ export function FileTreePanel({
             </button>
           )}
 
+          {showAddToChat && (
+            <button
+              className="w-full px-3 py-1.5 text-left text-xs text-foreground hover:bg-muted/60 flex items-center gap-2"
+              onClick={() => {
+                setContextMenu(null);
+                const itemKind = menuEntry.type === 'directory' ? 'directory' : 'file';
+                void Promise
+                  .resolve(onAddToChat?.(menuEntry.path, itemKind, workspaceAgentId))
+                  .catch((error: unknown) => {
+                    const fallbackMessage = itemKind === 'directory'
+                      ? 'Failed to add directory to chat'
+                      : 'Failed to add file to chat';
+                    const message = error instanceof Error ? error.message : fallbackMessage;
+                    console.error('[FileTreePanel] add-to-chat failed:', error);
+                    showToastForAgent(workspaceAgentId, { type: 'error', message }, 4500);
+                  });
+              }}
+            >
+              <Paperclip size={12} />
+              Add to chat
+            </button>
+          )}
+
           {showRename && (
             <button
               className="w-full px-3 py-1.5 text-left text-xs text-foreground hover:bg-muted/60 flex items-center gap-2"
@@ -813,7 +850,7 @@ export function FileTreePanel({
             </button>
           )}
 
-          {!showRestore && !showRename && !showTrashAction && (
+          {!showRestore && !showAddToChat && !showRename && !showTrashAction && (
             <div className="px-3 py-1.5 text-xs text-muted-foreground">
               No actions
             </div>

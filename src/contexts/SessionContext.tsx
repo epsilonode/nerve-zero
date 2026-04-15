@@ -16,21 +16,17 @@ import {
   isTopLevelAgentSessionKey,
   pickDefaultSessionKey,
   getRootAgentId,
-  isRootChildSession,
 } from '@/features/sessions/sessionKeys';
-import { buildSpawnSubagentMessage, type SubagentCleanupMode } from '@/features/sessions/buildSpawnSubagentMessage';
 
 const BUSY_STATES = new Set(['running', 'thinking', 'tool_use', 'delta', 'started']);
 const IDLE_STATES = new Set(['idle', 'done', 'error', 'final', 'aborted', 'completed']);
 
-// sessions.list query defaults.
-// Keep spawn/discovery polling on a recent active-window query, but use the
-// full session list for the sidebar so older root chats stay visible.
-const SESSIONS_ACTIVE_MINUTES = 24 * 60; // 24h
-const SESSIONS_LIMIT = 200;
+// Use the full session list for the sidebar so older root chats stay visible.
 const FULL_SESSIONS_LIMIT = 1000;
-const SUBAGENT_DISCOVERY_TIMEOUT_MS = 60_000;
-const SUBAGENT_DISCOVERY_POLL_MS = 1_000;
+const MAIN_SESSION_KEY = 'agent:main:main';
+const SESSIONS_SPAWNED_LIMIT = 500;
+
+export type SubagentCleanupMode = 'keep' | 'delete';
 
 export interface SpawnSessionOpts {
   kind: 'root' | 'subagent';
@@ -228,7 +224,31 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         rpc('sessions.list', { limit: FULL_SESSIONS_LIMIT }) as Promise<SessionsListResponse>,
         fetchHiddenCronSessions(24 * 60, FULL_SESSIONS_LIMIT),
       ]);
-      return mergeSessionLists(res?.sessions ?? [], hiddenCronSessions);
+
+      const baseSessions = mergeSessionLists(res?.sessions ?? [], hiddenCronSessions);
+      const spawnedByRoots = new Set<string>([MAIN_SESSION_KEY]);
+      for (const rootSession of getTopLevelAgentSessions(baseSessions)) {
+        spawnedByRoots.add(getSessionKey(rootSession));
+      }
+
+      // Keep active child sessions visible even when the full sessions.list
+      // result lags behind the recent spawn/discovery flow.
+      const spawnedSessionLists = await Promise.all(
+        [...spawnedByRoots].map(async (rootSessionKey) => {
+          try {
+            const spawnedRes = await rpc('sessions.list', { spawnedBy: rootSessionKey, limit: SESSIONS_SPAWNED_LIMIT }) as SessionsListResponse;
+            return spawnedRes?.sessions ?? [];
+          } catch (err) {
+            console.debug('[SessionContext] Failed to fetch spawned sessions for root:', rootSessionKey, err);
+            return [];
+          }
+        }),
+      );
+
+      return spawnedSessionLists.reduce(
+        (acc, spawnedSessions) => mergeSessionLists(acc, spawnedSessions),
+        baseSessions,
+      );
     } catch (err) {
       console.debug('[SessionContext] Failed to fetch authoritative session list:', err);
       return sessionsRef.current;
@@ -741,7 +761,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const spawnSession = useCallback(async (opts: SpawnSessionOpts) => {
     const authoritativeSessions = await listAuthoritativeSessions();
-    const before = new Set(authoritativeSessions.map(getSessionKey));
 
     if (opts.kind === 'root') {
       const rootName = opts.agentName?.trim();
@@ -789,37 +808,27 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     if (!parentSessionKey) {
       throw new Error('Create a top-level agent before launching a subagent');
     }
-    const message = buildSpawnSubagentMessage({
-      task: opts.task,
-      label: opts.label,
-      model: opts.model,
-      thinking: opts.thinking,
-      cleanup: opts.cleanup,
-    });
-    const idempotencyKey = `spawn-subagent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    await rpc('chat.send', { sessionKey: parentSessionKey, message, idempotencyKey });
 
-    // A spawned child can take a while to appear in sessions.list for non-main
-    // roots, even after the parent agent accepts the request.
-    const deadline = Date.now() + SUBAGENT_DISCOVERY_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      try {
-        const res = await rpc('sessions.list', { activeMinutes: SESSIONS_ACTIVE_MINUTES, limit: SESSIONS_LIMIT }) as SessionsListResponse;
-        const fresh = res?.sessions ?? [];
-        const newSession = fresh.find((session) => {
-          const sessionKey = getSessionKey(session);
-          return isSubagentSessionKey(sessionKey) && isRootChildSession(sessionKey, parentSessionKey) && !before.has(sessionKey);
-        });
-        if (newSession) {
-          await refreshSessions();
-          setCurrentSession(getSessionKey(newSession));
-          return;
-        }
-      } catch { /* keep polling */ }
-      await new Promise(r => setTimeout(r, SUBAGENT_DISCOVERY_POLL_MS));
+    const res = await fetch('/api/sessions/spawn-subagent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        parentSessionKey,
+        task: opts.task,
+        label: opts.label,
+        model: opts.model,
+        thinking: opts.thinking,
+        cleanup: opts.cleanup ?? 'keep',
+      }),
+    });
+
+    const data = await res.json() as { ok: boolean; sessionKey?: string; error?: string };
+    if (!data.ok || !data.sessionKey) {
+      throw new Error(data.error ?? 'Failed to spawn subagent');
     }
+
     await refreshSessions();
-    throw new Error('Timed out waiting for the new subagent session to appear');
+    setCurrentSession(data.sessionKey);
   }, [listAuthoritativeSessions, rpc, refreshSessions, setCurrentSession]);
 
   const renameSession = useCallback(async (sessionKey: string, label: string) => {

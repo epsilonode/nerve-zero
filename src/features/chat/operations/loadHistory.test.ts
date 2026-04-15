@@ -108,107 +108,24 @@ describe('splitToolCallMessage', () => {
     expect(result[0].isVoice).toBe(true);
   });
 
+  it('extracts upload manifest attachments from user transcript messages', () => {
+    const msg: ChatMessage = {
+      role: 'user',
+      content: 'Please use these files.\n\n<nerve-upload-manifest>{"version":1,"attachments":[{"id":"att-upload","origin":"upload","mode":"inline","name":"small.png","mimeType":"image/png","sizeBytes":120000,"inline":{"encoding":"base64","base64":"","base64Bytes":98000,"compressed":true},"preparation":{"sourceMode":"inline","finalMode":"inline","outcome":"optimized_inline","reason":"Inline image stayed within context-safe budget.","originalMimeType":"image/png","originalSizeBytes":120000},"policy":{"forwardToSubagents":false}},{"id":"att-path","origin":"server_path","mode":"file_reference","name":"capture.mov","mimeType":"video/quicktime","sizeBytes":8000000,"reference":{"kind":"local_path","path":"/workspace/capture.mov","uri":"file:///workspace/capture.mov"},"preparation":{"sourceMode":"file_reference","finalMode":"file_reference","outcome":"file_reference_ready","reason":"Sent as a validated workspace path.","originalMimeType":"video/quicktime","originalSizeBytes":8000000},"policy":{"forwardToSubagents":true}}]}</nerve-upload-manifest>',
+    };
+    const result = splitToolCallMessage(msg);
+    expect(result).toHaveLength(1);
+    expect(result[0].rawText).toBe('Please use these files.');
+    expect(result[0].uploadAttachments).toHaveLength(2);
+    expect(result[0].uploadAttachments?.[0].origin).toBe('upload');
+    expect(result[0].uploadAttachments?.[1].origin).toBe('server_path');
+    expect(result[0].uploadAttachments?.[1].reference?.path).toBe('/workspace/capture.mov');
+  });
+
   it('returns empty array for voice-only messages with no text', () => {
     const msg: ChatMessage = { role: 'user', content: '[voice] ' };
     const result = splitToolCallMessage(msg);
     expect(result).toHaveLength(0);
-  });
-
-  it('keeps image-only user messages', () => {
-    const msg: ChatMessage = {
-      role: 'user',
-      content: [
-        { type: 'image', mimeType: 'image/png', data: 'abc123' },
-      ],
-    };
-    const result = splitToolCallMessage(msg);
-    expect(result).toHaveLength(1);
-    expect(result[0].role).toBe('user');
-    expect(result[0].images).toHaveLength(1);
-    expect(result[0].images?.[0].mimeType).toBe('image/png');
-  });
-
-  it('keeps image-only transcript messages backed by MediaPath', () => {
-    const msg: ChatMessage = {
-      role: 'user',
-      content: '',
-      MediaPath: '/Users/cd0x23/.openclaw/media/inbound/test.png',
-      MediaType: 'image/png',
-    };
-    const result = splitToolCallMessage(msg);
-    expect(result).toHaveLength(1);
-    expect(result[0].images).toHaveLength(1);
-    expect(result[0].images?.[0]).toMatchObject({
-      mimeType: 'image/png',
-      preview: '/api/files?path=%2FUsers%2Fcd0x23%2F.openclaw%2Fmedia%2Finbound%2Ftest.png',
-      name: 'test.png',
-    });
-  });
-
-  it('keeps text-plus-image transcript messages backed by MediaPath', () => {
-    const msg: ChatMessage = {
-      role: 'user',
-      content: 'testing image upload to see if it get surpressed',
-      MediaPath: '/Users/cd0x23/.openclaw/media/inbound/test.png',
-      MediaType: 'image/png',
-    };
-    const result = splitToolCallMessage(msg);
-    expect(result).toHaveLength(1);
-    expect(result[0].rawText).toContain('testing image upload');
-    expect(result[0].images).toHaveLength(1);
-    expect(result[0].images?.[0].preview).toBe('/api/files?path=%2FUsers%2Fcd0x23%2F.openclaw%2Fmedia%2Finbound%2Ftest.png');
-  });
-
-  it('renders omitted chat.history image blocks via transcript media route', () => {
-    const msg: ChatMessage = {
-      role: 'user',
-      content: [
-        { type: 'text', text: 'testing' },
-        { type: 'image', mimeType: 'image/jpeg', omitted: true, bytes: 12345 },
-      ],
-      timestamp: 1775130149867,
-    };
-    const result = splitToolCallMessage(msg, 'agent:main:main');
-    expect(result).toHaveLength(1);
-    expect(result[0].images).toHaveLength(1);
-    expect(result[0].images?.[0]).toMatchObject({
-      mimeType: 'image/jpeg',
-      preview: '/api/sessions/media?sessionKey=agent%3Amain%3Amain&timestamp=1775130149867&imageIndex=0',
-      name: 'image-1',
-    });
-  });
-
-  it('keeps images when user messages are split into system-event + user segments', () => {
-    const msg: ChatMessage = {
-      role: 'user',
-      content: [
-        { type: 'text', text: 'System: [2026-04-02 15:03:56 GMT+3] Exec completed (fast-fal, code 0) :: tests passed\nhello' },
-        { type: 'image', mimeType: 'image/jpeg', omitted: true, bytes: 12345 },
-      ],
-      timestamp: 1775131617235,
-    };
-    const result = splitToolCallMessage(msg, 'agent:main:main');
-    expect(result).toHaveLength(2);
-    expect(result[0]).toMatchObject({ role: 'event' });
-    expect(result[1]).toMatchObject({ role: 'user', rawText: 'hello' });
-    expect(result[1].images).toHaveLength(1);
-    expect(result[1].images?.[0].preview).toBe('/api/sessions/media?sessionKey=agent%3Amain%3Amain&timestamp=1775131617235&imageIndex=0');
-  });
-
-  it('creates an image-only user bubble after system-event splitting when no user text remains', () => {
-    const msg: ChatMessage = {
-      role: 'user',
-      content: [
-        { type: 'text', text: 'System: [2026-04-02 15:03:56 GMT+3] Exec completed (fast-fal, code 0) :: tests passed' },
-        { type: 'image', mimeType: 'image/jpeg', omitted: true, bytes: 12345 },
-      ],
-      timestamp: 1775131617235,
-    };
-    const result = splitToolCallMessage(msg, 'agent:main:main');
-    expect(result).toHaveLength(2);
-    expect(result[0]).toMatchObject({ role: 'event' });
-    expect(result[1]).toMatchObject({ role: 'user', rawText: '' });
-    expect(result[1].images).toHaveLength(1);
   });
 
   it('handles thinking blocks', () => {
@@ -340,6 +257,56 @@ describe('processChatMessages', () => {
   it('handles empty input', () => {
     expect(processChatMessages([])).toHaveLength(0);
   });
+
+  it('preserves legacy MediaPath and MediaUrl images as extracted images', () => {
+    const msgs: ChatMessage[] = [
+      {
+        role: 'assistant',
+        content: 'legacy image payload',
+        MediaPath: '/root/.openclaw/workspace/legacy/screenshot.png',
+        MediaUrls: ['https://example.com/generated.png'],
+      },
+    ];
+
+    const result = processChatMessages(msgs);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].extractedImages).toEqual([
+      { url: '/api/files?path=%2Froot%2F.openclaw%2Fworkspace%2Flegacy%2Fscreenshot.png', alt: 'screenshot.png' },
+      { url: 'https://example.com/generated.png', alt: 'generated.png' },
+    ]);
+  });
+
+  it('does not synthesize omitted transcript image URLs without a persisted timestamp', () => {
+    const result = processChatMessages([
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'generated image' },
+          { type: 'image', omitted: true, mimeType: 'image/png' },
+        ],
+      },
+    ], { sessionKey: 'agent:main:main' });
+
+    expect(result).toHaveLength(1);
+    expect(result[0].extractedImages).toBeUndefined();
+  });
+
+  it('deduplicates merged image references while preserving order', () => {
+    const result = processChatMessages([
+      {
+        role: 'assistant',
+        content: '![generated](https://example.com/generated.png)\n![other](https://example.com/other.png)',
+        MediaUrls: ['https://example.com/generated.png'],
+      },
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].extractedImages?.map((img) => img.url)).toEqual([
+      'https://example.com/generated.png',
+      'https://example.com/other.png',
+    ]);
+  });
 });
 
 describe('loadChatHistory', () => {
@@ -377,5 +344,30 @@ describe('loadChatHistory', () => {
   it('propagates RPC errors', async () => {
     const rpc = vi.fn().mockRejectedValue(new Error('network error'));
     await expect(loadChatHistory({ rpc, sessionKey: 'sk' })).rejects.toThrow('network error');
+  });
+
+  it('hydrates omitted transcript images through the session media route', async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      messages: [
+        {
+          role: 'assistant',
+          timestamp: 1775131617235,
+          content: [
+            { type: 'text', text: 'generated image' },
+            { type: 'image', omitted: true, mimeType: 'image/png' },
+          ],
+        },
+      ],
+    });
+
+    const result = await loadChatHistory({ rpc, sessionKey: 'agent:main:main' });
+
+    expect(result).toHaveLength(1);
+    expect(result[0].extractedImages).toEqual([
+      {
+        url: '/api/sessions/media?sessionKey=agent%3Amain%3Amain&timestamp=1775131617235&imageIndex=0',
+        alt: 'message-1775131617235-image-0.png',
+      },
+    ]);
   });
 });

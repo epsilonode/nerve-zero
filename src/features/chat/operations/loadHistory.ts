@@ -5,7 +5,7 @@
  * All functions here are pure (no React hooks, setState, or refs).
  */
 import { generateMsgId } from '@/features/chat/types';
-import type { ChatMsg, ChatMsgRole, ToolGroupEntry } from '@/features/chat/types';
+import type { ChatMsg, ChatMsgRole, ToolGroupEntry, UploadAttachmentDescriptor } from '@/features/chat/types';
 import type { ChatMessage, ContentBlock, ChatHistoryResponse } from '@/types';
 import { extractText, describeToolUse, renderMarkdown, renderToolResults } from '@/utils/helpers';
 import { decodeHtmlEntities } from '@/lib/formatting';
@@ -15,23 +15,79 @@ import { extractEditBlocks, extractWriteBlocks } from '@/features/chat/edit-bloc
 import { extractImages } from '@/features/chat/extractImages';
 import type { MessageImage } from '@/features/chat/types';
 
-interface ImageBlockContext {
-  sessionKey?: string;
-  messageTimestamp?: string | number | null;
-  imageIndex: number;
+function toArray<T>(value: T | T[] | undefined): T[] {
+  if (Array.isArray(value)) return value;
+  return value ? [value] : [];
 }
 
-function omittedImagePreviewUrl(sessionKey: string, messageTimestamp: string | number, imageIndex: number): string {
-  const params = new URLSearchParams({
-    sessionKey,
-    timestamp: String(messageTimestamp),
-    imageIndex: String(imageIndex),
+function getFilenameFromPathish(value: string, fallback: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return fallback;
+  const segments = trimmed.split('/').filter(Boolean);
+  return segments[segments.length - 1] || fallback;
+}
+
+function imageExtensionFromMimeType(mimeType?: string): string {
+  if (!mimeType?.startsWith('image/')) return 'png';
+  const subtype = mimeType.slice('image/'.length).toLowerCase();
+  if (subtype === 'jpeg') return 'jpg';
+  return subtype || 'png';
+}
+
+function dedupeExtractedImages(images: Array<{ url: string; alt?: string }>): Array<{ url: string; alt?: string }> {
+  const seen = new Set<string>();
+  return images.filter((image) => {
+    if (seen.has(image.url)) return false;
+    seen.add(image.url);
+    return true;
   });
-  return `/api/sessions/media?${params.toString()}`;
+}
+
+function extractLegacyMessageImages(
+  message: ChatMessage,
+  options: { sessionKey?: string; messageTimestampMs?: number },
+): Array<{ url: string; alt?: string }> {
+  const extracted: Array<{ url: string; alt?: string }> = [];
+
+  for (const mediaPath of [...toArray(message.MediaPath), ...toArray(message.MediaPaths)]) {
+    const trimmedPath = mediaPath.trim();
+    if (!trimmedPath) continue;
+    extracted.push({
+      url: `/api/files?path=${encodeURIComponent(trimmedPath)}`,
+      alt: getFilenameFromPathish(trimmedPath, 'image'),
+    });
+  }
+
+  for (const mediaUrl of [...toArray(message.MediaUrl), ...toArray(message.MediaUrls)]) {
+    const trimmedUrl = mediaUrl.trim();
+    if (!trimmedUrl) continue;
+    extracted.push({
+      url: trimmedUrl,
+      alt: getFilenameFromPathish(trimmedUrl.split('?')[0] || trimmedUrl, 'image'),
+    });
+  }
+
+  if (options.sessionKey && Number.isFinite(options.messageTimestampMs) && Array.isArray(message.content)) {
+    const timestampMs = options.messageTimestampMs as number;
+    let imageIndex = 0;
+    for (const block of message.content) {
+      if (block.type !== 'image') continue;
+      if (block.omitted) {
+        const extension = imageExtensionFromMimeType(block.mimeType || block.source?.media_type);
+        extracted.push({
+          url: `/api/sessions/media?sessionKey=${encodeURIComponent(options.sessionKey)}&timestamp=${timestampMs}&imageIndex=${imageIndex}`,
+          alt: `message-${timestampMs}-image-${imageIndex}.${extension}`,
+        });
+      }
+      imageIndex += 1;
+    }
+  }
+
+  return extracted;
 }
 
 /** Convert an image content block (from gateway) into a MessageImage for rendering. */
-function imageBlockToMessageImage(block: ContentBlock, context?: ImageBlockContext): MessageImage | null {
+function imageBlockToMessageImage(block: ContentBlock): MessageImage | null {
   // Format 1: { type: "image", data: "base64...", mimeType: "image/jpeg" }
   if (block.data && block.mimeType) {
     const dataUrl = `data:${block.mimeType};base64,${block.data}`;
@@ -42,105 +98,15 @@ function imageBlockToMessageImage(block: ContentBlock, context?: ImageBlockConte
     const dataUrl = `data:${block.source.media_type};base64,${block.source.data}`;
     return { mimeType: block.source.media_type, content: block.source.data, preview: dataUrl, name: 'image' };
   }
-  // Format 3: chat.history omitted inline data; fetch from local transcript-backed route.
-  if (block.omitted && block.mimeType && context?.sessionKey && context.messageTimestamp != null) {
-    return {
-      mimeType: block.mimeType,
-      content: '',
-      preview: omittedImagePreviewUrl(context.sessionKey, context.messageTimestamp, context.imageIndex),
-      name: `image-${context.imageIndex + 1}`,
-    };
-  }
   return null;
 }
 
 /** Extract MessageImage[] from content blocks. */
-function extractImageBlocks(
-  content: ContentBlock[],
-  context?: Omit<ImageBlockContext, 'imageIndex'>,
-): MessageImage[] {
-  let imageIndex = -1;
+function extractImageBlocks(content: ContentBlock[]): MessageImage[] {
   return content
     .filter(b => b.type === 'image')
-    .map((block) => {
-      imageIndex += 1;
-      return imageBlockToMessageImage(block, { ...context, imageIndex });
-    })
+    .map(imageBlockToMessageImage)
     .filter((img): img is MessageImage => img !== null);
-}
-
-const IMAGE_MIME_BY_EXT: Record<string, string> = {
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.gif': 'image/gif',
-  '.webp': 'image/webp',
-  '.svg': 'image/svg+xml',
-  '.avif': 'image/avif',
-};
-
-function guessImageMime(pathOrUrl: string, fallback?: string): string {
-  if (fallback?.startsWith('image/')) return fallback;
-  const match = pathOrUrl.match(/\.([a-zA-Z0-9]+)(?:$|[?#])/);
-  if (!match) return fallback || 'image/png';
-  return IMAGE_MIME_BY_EXT[`.${match[1].toLowerCase()}`] || fallback || 'image/png';
-}
-
-function localMediaPathToPreviewUrl(rawPath: string): string {
-  return `/api/files?path=${encodeURIComponent(rawPath)}`;
-}
-
-function normalizeMediaField<T>(single?: T, many?: T[]): T[] {
-  const fromMany = Array.isArray(many) ? many.filter((v): v is T => Boolean(v)) : [];
-  if (fromMany.length > 0) return fromMany;
-  return single ? [single] : [];
-}
-
-function extractTranscriptMediaImages(message: ChatMessage): MessageImage[] {
-  const mediaUrls = normalizeMediaField(message.MediaUrl, message.MediaUrls);
-  const mediaPaths = normalizeMediaField(message.MediaPath, message.MediaPaths);
-  const mediaTypes = Array.isArray(message.MediaTypes) && message.MediaTypes.length > 0
-    ? message.MediaTypes
-    : normalizeMediaField(message.MediaType, undefined);
-
-  const fromUrls = mediaUrls.map((url, index) => ({
-    mimeType: guessImageMime(url, mediaTypes[index]),
-    content: url,
-    preview: url,
-    name: url.split('/').pop() || `image-${index + 1}`,
-  }));
-
-  const fromPaths = mediaPaths.map((mediaPath, index) => ({
-    mimeType: guessImageMime(mediaPath, mediaTypes[index]),
-    content: mediaPath,
-    preview: localMediaPathToPreviewUrl(mediaPath),
-    name: mediaPath.split('/').pop() || `image-${index + 1}`,
-  }));
-
-  const seen = new Set<string>();
-  return [...fromUrls, ...fromPaths].filter((img) => {
-    const key = `${img.mimeType}|${img.preview}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-function extractMessageImages(message: ChatMessage, sessionKey?: string): MessageImage[] {
-  const contentImages = Array.isArray(message.content)
-    ? extractImageBlocks(message.content as ContentBlock[], { sessionKey, messageTimestamp: message.timestamp || message.createdAt || message.ts || null })
-    : [];
-  const transcriptImages = extractTranscriptMediaImages(message);
-  if (contentImages.length === 0) return transcriptImages;
-  if (transcriptImages.length === 0) return contentImages;
-
-  const seen = new Set<string>();
-  return [...contentImages, ...transcriptImages].filter((img) => {
-    const key = `${img.mimeType}|${img.preview}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
 }
 
 // ─── RPC type alias ────────────────────────────────────────────────────────────
@@ -235,6 +201,31 @@ const WEBCHAT_ENVELOPE_RE = /Conversation info \(untrusted metadata\):[\s\S]*?"s
 // eslint-disable-next-line no-control-regex
 const stripAnsi = (s: string) => s.replace(/\x1b\[\d*(?:;\d+)*m/g, '');
 
+const UPLOAD_MANIFEST_RE = /\s*<nerve-upload-manifest>([\s\S]*?)<\/nerve-upload-manifest>\s*$/;
+
+function extractUploadAttachments(rawText: string): {
+  cleanedText: string;
+  uploadAttachments?: UploadAttachmentDescriptor[];
+} {
+  const match = rawText.match(UPLOAD_MANIFEST_RE);
+  if (!match) return { cleanedText: rawText };
+
+  const cleanedText = rawText.replace(UPLOAD_MANIFEST_RE, '').trimEnd();
+
+  try {
+    const parsed = JSON.parse(match[1]) as { attachments?: UploadAttachmentDescriptor[] };
+    if (!Array.isArray(parsed.attachments) || parsed.attachments.length === 0) {
+      return { cleanedText };
+    }
+    return {
+      cleanedText,
+      uploadAttachments: parsed.attachments,
+    };
+  } catch {
+    return { cleanedText: rawText };
+  }
+}
+
 /**
  * Split system event lines out of a user message text.
  * Consecutive non-system lines are joined back into a single user segment.
@@ -261,9 +252,11 @@ function splitSystemEvents(text: string): Array<{ role: 'event' | 'user'; text: 
   return segments;
 }
 
-export function splitToolCallMessage(m: ChatMessage, sessionKey?: string): ChatMsg[] {
+export function splitToolCallMessage(m: ChatMessage, options: { sessionKey?: string } = {}): ChatMsg[] {
   const ts = m.timestamp || m.createdAt || m.ts || null;
-  const timestamp = ts ? new Date(ts as string | number) : new Date();
+  const parsedTimestamp = ts ? new Date(ts as string | number) : null;
+  const hasPersistedTimestamp = Boolean(parsedTimestamp && Number.isFinite(parsedTimestamp.getTime()));
+  const timestamp = hasPersistedTimestamp ? parsedTimestamp as Date : new Date();
 
   // Only interleave for assistant messages with array content containing tool_use
   if (m.role === 'assistant' && Array.isArray(m.content)) {
@@ -277,7 +270,7 @@ export function splitToolCallMessage(m: ChatMessage, sessionKey?: string): ChatM
     if (hasTools || hasThinking) {
       const result: ChatMsg[] = [];
       let textBuffer = '';
-      const contentImages = extractMessageImages(m, sessionKey);
+      const contentImages = extractImageBlocks(m.content as ContentBlock[]);
 
       const flushText = () => {
         if (!textBuffer.trim()) { textBuffer = ''; return; }
@@ -354,7 +347,6 @@ export function splitToolCallMessage(m: ChatMessage, sessionKey?: string): ChatM
 
   // Normal message (no tool calls, or non-assistant)
   let rawText = extractText(m);
-  const contentImages = extractMessageImages(m, sessionKey);
 
   // Strip gateway decorations from user messages
   let isVoice = false;
@@ -367,15 +359,20 @@ export function splitToolCallMessage(m: ChatMessage, sessionKey?: string): ChatM
     rawText = rawText.replace(/^\[voice\]\s*/, '');
     // After all decorations are removed, a voice-only message with no
     // transcription text becomes empty — drop it to avoid a ghost bubble.
-    // But keep image-only user messages so uploaded attachments remain visible.
-    if (!rawText.trim() && contentImages.length === 0) return [];
+    if (!rawText.trim()) return [];
   }
+
+  const { cleanedText: uploadManifestStripped, uploadAttachments } = m.role === 'user'
+    ? extractUploadAttachments(rawText)
+    : { cleanedText: rawText, uploadAttachments: undefined };
+
+  rawText = uploadManifestStripped;
 
   // Split system events out of user messages into separate event bubbles
   if (m.role === 'user' && SYSTEM_EVENT_LINE.test(rawText)) {
     const segments = splitSystemEvents(rawText);
     if (segments.some(s => s.role === 'event')) {
-      const mapped: ChatMsg[] = segments.map(seg => {
+      return segments.map(seg => {
         const { cleaned: ttsStripped } = extractTTSMarkers(seg.text);
         const { cleaned: chartCleaned, charts } = extractChartMarkers(ttsStripped);
         return {
@@ -386,30 +383,9 @@ export function splitToolCallMessage(m: ChatMessage, sessionKey?: string): ChatM
           streaming: false,
           ...(charts.length > 0 ? { charts } : {}),
           ...(isVoice && seg.role === 'user' ? { isVoice: true } : {}),
+          ...(uploadAttachments && seg.role === 'user' ? { uploadAttachments } : {}),
         };
       });
-
-      if (contentImages.length > 0) {
-        const lastUserIndex = mapped.map(msg => msg.role).lastIndexOf('user');
-        if (lastUserIndex >= 0) {
-          mapped[lastUserIndex] = {
-            ...mapped[lastUserIndex],
-            images: [...(mapped[lastUserIndex].images || []), ...contentImages],
-          };
-        } else {
-          mapped.push({
-            role: 'user',
-            html: '',
-            rawText: '',
-            timestamp,
-            streaming: false,
-            images: contentImages,
-            ...(isVoice ? { isVoice: true } : {}),
-          });
-        }
-      }
-
-      return mapped;
     }
   }
 
@@ -419,6 +395,14 @@ export function splitToolCallMessage(m: ChatMessage, sessionKey?: string): ChatM
   const { cleaned: text, images: extractedImages } = isAssistant
     ? extractImages(chartCleaned)
     : { cleaned: chartCleaned, images: [] };
+  const legacyExtractedImages = extractLegacyMessageImages(m, {
+    sessionKey: options.sessionKey,
+    messageTimestampMs: hasPersistedTimestamp ? timestamp.getTime() : undefined,
+  });
+  const combinedExtractedImages = dedupeExtractedImages([...extractedImages, ...legacyExtractedImages]);
+
+  // Extract image content blocks (base64 images from gateway)
+  const contentImages = Array.isArray(m.content) ? extractImageBlocks(m.content as ContentBlock[]) : [];
 
   // Tag system notifications (subagent/cron completions) for collapsible strip rendering
   const sysNotif = m.role === 'user' ? detectSystemNotification(rawText) : { match: false, label: '' };
@@ -430,8 +414,9 @@ export function splitToolCallMessage(m: ChatMessage, sessionKey?: string): ChatM
     timestamp,
     streaming: false,
     ...(charts.length > 0 ? { charts } : {}),
-    ...(extractedImages.length > 0 ? { extractedImages } : {}),
+    ...(combinedExtractedImages.length > 0 ? { extractedImages: combinedExtractedImages } : {}),
     ...(contentImages.length > 0 ? { images: contentImages } : {}),
+    ...(uploadAttachments ? { uploadAttachments } : {}),
     ...(isVoice ? { isVoice: true } : {}),
     ...(sysNotif.match ? { isSystemNotification: true, systemLabel: sysNotif.label } : {}),
   }];
@@ -561,10 +546,10 @@ export function tagIntermediateMessages(msgs: ChatMsg[]): ChatMsg[] {
  *
  * filter → split → group → tag
  */
-export function processChatMessages(messages: ChatMessage[], sessionKey?: string): ChatMsg[] {
+export function processChatMessages(messages: ChatMessage[], options: { sessionKey?: string } = {}): ChatMsg[] {
   const chatMsgs: ChatMsg[] = messages
     .filter(filterMessage)
-    .flatMap((message) => splitToolCallMessage(message, sessionKey));
+    .flatMap((message) => splitToolCallMessage(message, options));
 
   const grouped = groupToolMessages(chatMsgs);
   const tagged = tagIntermediateMessages(grouped);
@@ -593,5 +578,5 @@ export async function loadChatHistory(params: {
   const res = await rpc('chat.history', { sessionKey, limit }) as ChatHistoryResponse;
   const msgs = res?.messages || [];
 
-  return processChatMessages(msgs, sessionKey);
+  return processChatMessages(msgs, { sessionKey });
 }
