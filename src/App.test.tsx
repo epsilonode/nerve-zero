@@ -301,15 +301,13 @@ vi.mock('@/components/ConfirmDialog', () => ({
 }));
 
 vi.mock('@/features/chat/ChatPanel', () => ({
-  ChatPanel: forwardRef(({ onOpenBeadId }: { onOpenBeadId?: (target: { beadId: string; workspaceAgentId?: string }) => void }, ref) => {
+  ChatPanel: forwardRef((_props: { onOpenBeadId?: (target: { beadId: string; workspaceAgentId?: string }) => void }, ref) => {
     useImperativeHandle(ref, () => ({
       focusInput: vi.fn(),
       addWorkspacePath: addWorkspacePathSpy,
     }));
 
-    return (
-      <button type="button" onClick={() => onOpenBeadId?.({ beadId: 'nerve-fms2' })}>Open bead viewer</button>
-    );
+    return null;
   }),
 }));
 
