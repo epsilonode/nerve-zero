@@ -257,6 +257,56 @@ describe('processChatMessages', () => {
   it('handles empty input', () => {
     expect(processChatMessages([])).toHaveLength(0);
   });
+
+  it('preserves legacy MediaPath and MediaUrl images as extracted images', () => {
+    const msgs: ChatMessage[] = [
+      {
+        role: 'assistant',
+        content: 'legacy image payload',
+        MediaPath: '/root/.openclaw/workspace/legacy/screenshot.png',
+        MediaUrls: ['https://example.com/generated.png'],
+      },
+    ];
+
+    const result = processChatMessages(msgs);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].extractedImages).toEqual([
+      { url: '/api/files?path=%2Froot%2F.openclaw%2Fworkspace%2Flegacy%2Fscreenshot.png', alt: 'screenshot.png' },
+      { url: 'https://example.com/generated.png', alt: 'generated.png' },
+    ]);
+  });
+
+  it('does not synthesize omitted transcript image URLs without a persisted timestamp', () => {
+    const result = processChatMessages([
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'generated image' },
+          { type: 'image', omitted: true, mimeType: 'image/png' },
+        ],
+      },
+    ], { sessionKey: 'agent:main:main' });
+
+    expect(result).toHaveLength(1);
+    expect(result[0].extractedImages).toBeUndefined();
+  });
+
+  it('deduplicates merged image references while preserving order', () => {
+    const result = processChatMessages([
+      {
+        role: 'assistant',
+        content: '![generated](https://example.com/generated.png)\n![other](https://example.com/other.png)',
+        MediaUrls: ['https://example.com/generated.png'],
+      },
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].extractedImages?.map((img) => img.url)).toEqual([
+      'https://example.com/generated.png',
+      'https://example.com/other.png',
+    ]);
+  });
 });
 
 describe('loadChatHistory', () => {
@@ -294,5 +344,30 @@ describe('loadChatHistory', () => {
   it('propagates RPC errors', async () => {
     const rpc = vi.fn().mockRejectedValue(new Error('network error'));
     await expect(loadChatHistory({ rpc, sessionKey: 'sk' })).rejects.toThrow('network error');
+  });
+
+  it('hydrates omitted transcript images through the session media route', async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      messages: [
+        {
+          role: 'assistant',
+          timestamp: 1775131617235,
+          content: [
+            { type: 'text', text: 'generated image' },
+            { type: 'image', omitted: true, mimeType: 'image/png' },
+          ],
+        },
+      ],
+    });
+
+    const result = await loadChatHistory({ rpc, sessionKey: 'agent:main:main' });
+
+    expect(result).toHaveLength(1);
+    expect(result[0].extractedImages).toEqual([
+      {
+        url: '/api/sessions/media?sessionKey=agent%3Amain%3Amain&timestamp=1775131617235&imageIndex=0',
+        alt: 'message-1775131617235-image-0.png',
+      },
+    ]);
   });
 });

@@ -31,6 +31,13 @@ function formatMissionTime(msgTime: Date, firstTime: Date | null): string {
   return `T+${h}:${m}:${s}`;
 }
 
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1).replace(/\.0$/, '')} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1).replace(/\.0$/, '')} MB`;
+}
+
 interface MessageBubbleProps {
   msg: ChatMsg;
   index: number;
@@ -299,6 +306,25 @@ function MessageBubbleInner({ msg, index, isCollapsed, isMemoryCollapsed, memory
               </Suspense>
             </div>
           )}
+          {msg.uploadAttachments && msg.uploadAttachments.length > 0 && (
+            <div className="mt-3 flex flex-col gap-2">
+              {msg.uploadAttachments.map((attachment) => (
+                <div key={attachment.id} className="rounded-xl border border-border/60 bg-secondary/30 px-3 py-2 text-[0.733rem] text-muted-foreground">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium text-foreground">{attachment.name}</span>
+                    <span className="cockpit-badge" data-tone={attachment.mode === 'file_reference' ? 'warning' : 'primary'}>
+                      {attachment.mode === 'file_reference' ? 'Local File' : 'Inline'}
+                    </span>
+                    <span>{formatBytes(attachment.sizeBytes)}</span>
+                    <span>{attachment.mimeType}</span>
+                  </div>
+                  {attachment.reference?.path && (
+                    <div className="mt-1 font-mono text-[0.667rem] text-muted-foreground/90">{attachment.reference.path}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
           {msg.extractedImages && msg.extractedImages.length > 0 && (
             <div className="flex flex-col gap-2 mt-2">
               {msg.extractedImages.map((img, idx) => (
@@ -373,9 +399,20 @@ export const MessageBubble = memo(MessageBubbleInner, (prev, next) => {
   // Charts
   if (prev.msg.charts?.length !== next.msg.charts?.length) return false;
   
-  // Images
+  // Images and attachment metadata
   if (prev.msg.images?.length !== next.msg.images?.length) return false;
   if (prev.msg.extractedImages?.length !== next.msg.extractedImages?.length) return false;
+  if ((prev.msg.uploadAttachments?.length || 0) !== (next.msg.uploadAttachments?.length || 0)) return false;
+  if ((prev.msg.uploadAttachments || []).some((attachment, idx) => {
+    const nextAttachment = next.msg.uploadAttachments?.[idx];
+    return !nextAttachment
+      || attachment.id !== nextAttachment.id
+      || attachment.name !== nextAttachment.name
+      || attachment.mode !== nextAttachment.mode
+      || attachment.sizeBytes !== nextAttachment.sizeBytes
+      || attachment.mimeType !== nextAttachment.mimeType
+      || attachment.reference?.path !== nextAttachment.reference?.path;
+  })) return false;
   
   // Agent name (rare change but must re-render when it does)
   if (prev.agentName !== next.agentName) return false;

@@ -338,6 +338,7 @@ export default function App({ onLogout }: AppProps) {
   const [chatPathLinkPrefixes, setChatPathLinkPrefixes] = useState<string[]>(
     DEFAULT_CHAT_PATH_LINKS_CONFIG.prefixes,
   );
+  const [addToChatEnabled, setAddToChatEnabled] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams({ agentId: workspaceAgentId });
@@ -365,6 +366,54 @@ export default function App({ onLogout }: AppProps) {
 
     return () => controller.abort();
   }, [workspaceAgentId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let retryTimer: number | null = null;
+    let attempts = 0;
+    const maxAttempts = 3;
+
+    const loadUploadConfig = () => {
+      attempts += 1;
+
+      void fetch('/api/upload-config', { signal: controller.signal })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (controller.signal.aborted) return;
+
+          if (data) {
+            setAddToChatEnabled(Boolean(data.fileReferenceEnabled));
+            return;
+          }
+
+          if (attempts >= maxAttempts) {
+            setAddToChatEnabled(false);
+            return;
+          }
+
+          retryTimer = window.setTimeout(loadUploadConfig, 1000);
+        })
+        .catch(() => {
+          if (controller.signal.aborted) return;
+
+          if (attempts >= maxAttempts) {
+            setAddToChatEnabled(false);
+            return;
+          }
+
+          retryTimer = window.setTimeout(loadUploadConfig, 1000);
+        });
+    };
+
+    loadUploadConfig();
+
+    return () => {
+      controller.abort();
+      if (retryTimer !== null) {
+        window.clearTimeout(retryTimer);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (kanbanVisible || viewMode !== 'kanban') return;
@@ -916,7 +965,8 @@ export default function App({ onLogout }: AppProps) {
               <FileTreePanel
                 workspaceAgentId={workspaceAgentId}
                 onOpenFile={openFile}
-                onAddToChat={(path, kind) => chatPanelRef.current?.addWorkspacePath(path, kind)}
+                onAddToChat={(path, kind, agentId) => chatPanelRef.current?.addWorkspacePath(path, kind, agentId ?? workspaceAgentId)}
+                addToChatEnabled={addToChatEnabled}
                 lastChangedEvent={lastChangedEvent}
                 revealRequest={revealRequest}
                 onRemapOpenPaths={remapOpenPaths}
@@ -943,7 +993,8 @@ export default function App({ onLogout }: AppProps) {
                   <FileTreePanel
                     workspaceAgentId={workspaceAgentId}
                     onOpenFile={openFile}
-                    onAddToChat={(path, kind) => chatPanelRef.current?.addWorkspacePath(path, kind)}
+                    onAddToChat={(path, kind, agentId) => chatPanelRef.current?.addWorkspacePath(path, kind, agentId ?? workspaceAgentId)}
+                    addToChatEnabled={addToChatEnabled}
                     lastChangedEvent={lastChangedEvent}
                     revealRequest={revealRequest}
                     onRemapOpenPaths={remapOpenPaths}

@@ -268,7 +268,7 @@ describe('InputBar', () => {
     expect(screen.queryByRole('button', { name: /Browse by path/i })).not.toBeInTheDocument();
   });
 
-  it('stages workspace file add-to-chat requests as server_path file references', async () => {
+  it('stages workspace file add-to-chat requests as server_path file references for the active workspace agent', async () => {
     const onSend = vi.fn();
     const ref = createRef<InputBarHandle>();
     render(<InputBar ref={ref} onSend={onSend} isGenerating={false} />);
@@ -278,11 +278,14 @@ describe('InputBar', () => {
       expect(fileInput.accept).toBe('*/*');
     });
 
-    await ref.current?.addWorkspacePath('attach-me.png', 'file');
+    await (ref.current as InputBarHandle & {
+      addWorkspacePath: (path: string, kind: 'file' | 'directory', agentId?: string) => Promise<void>;
+    } | null)?.addWorkspacePath('attach-me.png', 'file', 'agent-research');
 
     await waitFor(() => {
-      expect(screen.getAllByText('attach-me.png').length).toBeGreaterThan(0);
-      expect(screen.getByText('Path Ref')).toBeInTheDocument();
+      expect(screen.getAllByText('attach-me.png')).toHaveLength(1);
+      expect(screen.getByText('Local File')).toBeInTheDocument();
+      expect(screen.queryByText('Path Ref')).not.toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByLabelText('Send message'));
@@ -314,6 +317,13 @@ describe('InputBar', () => {
         path: '/workspace/attach-me.png',
         uri: 'file:///workspace/attach-me.png',
       },
+    });
+
+    const resolveCall = vi.mocked(global.fetch).mock.calls.find(([input]) => String(input).includes('/api/upload-reference/resolve'));
+    expect(resolveCall).toBeDefined();
+    expect(JSON.parse(String((resolveCall?.[1] as RequestInit | undefined)?.body ?? '{}'))).toMatchObject({
+      path: 'attach-me.png',
+      agentId: 'agent-research',
     });
 
     const fetchUrls = vi.mocked(global.fetch).mock.calls.map(([input]) => String(input));

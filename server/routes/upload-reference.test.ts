@@ -126,6 +126,39 @@ describe('POST /api/upload-reference/resolve', () => {
     await expect(fs.readFile(json.items[0].absolutePath, 'utf8')).resolves.toBe('hello upload');
   });
 
+  it('resolves direct workspace references against the requested agent workspace', async () => {
+    const { homeDir } = await makeHomeWorkspace();
+    const agentWorkspaceRoot = path.join(homeDir, '.openclaw', 'workspace-research');
+    const targetPath = path.join(agentWorkspaceRoot, 'docs', 'note.md');
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    await fs.writeFile(targetPath, '# hi\n', 'utf8');
+
+    const { default: app } = await importRoute();
+    const res = await app.request('/api/upload-reference/resolve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: 'docs/note.md', agentId: 'research' }),
+    });
+
+    expect(res.status).toBe(200);
+    const json = await res.json() as {
+      ok: boolean;
+      items: Array<{
+        canonicalPath: string;
+        absolutePath: string;
+        originalName: string;
+      }>;
+    };
+
+    expect(json.ok).toBe(true);
+    expect(json.items).toHaveLength(1);
+    expect(json.items[0]).toEqual(expect.objectContaining({
+      canonicalPath: 'docs/note.md',
+      absolutePath: targetPath,
+      originalName: 'note.md',
+    }));
+  });
+
   it('rejects symlink escapes that resolve outside the workspace root', async () => {
     const { homeDir, workspaceRoot } = await makeHomeWorkspace();
     const outsidePath = path.join(homeDir, 'outside.txt');
