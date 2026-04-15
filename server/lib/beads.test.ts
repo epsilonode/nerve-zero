@@ -81,6 +81,35 @@ describe('resolveBeadLookupRepoRoot', () => {
     cwdSpy.mockRestore();
   });
 
+  it('anchors legacy shorthand lookup to the current document repo instead of cwd', () => {
+    const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'beads-legacy-context-'));
+    const workspaceRoot = path.join(tempRoot, 'workspace');
+    const repoOneRoot = path.join(workspaceRoot, 'repo-one');
+    const repoTwoRoot = path.join(workspaceRoot, 'repo-two');
+    const currentDocumentPath = path.join('repo-one', 'docs', 'beads.md');
+
+    mkdirSync(path.join(repoOneRoot, '.beads'), { recursive: true });
+    mkdirSync(path.join(repoOneRoot, 'docs'), { recursive: true });
+    mkdirSync(path.join(repoTwoRoot, '.beads'), { recursive: true });
+    mkdirSync(path.join(repoTwoRoot, 'docs'), { recursive: true });
+
+    resolveAgentWorkspaceMock.mockImplementation(() => ({
+      agentId: 'main',
+      workspaceRoot,
+      memoryPath: path.join(workspaceRoot, 'MEMORY.md'),
+      memoryDir: path.join(workspaceRoot, 'memory'),
+    }));
+
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(repoTwoRoot);
+
+    try {
+      expect(resolveBeadLookupRepoRoot({ currentDocumentPath })).toBe(repoOneRoot);
+    } finally {
+      cwdSpy.mockRestore();
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it('uses explicit absolute repo roots directly when they stay within the workspace', () => {
     expect(resolveBeadLookupRepoRoot({ targetPath: path.join(WORKSPACE_ROOT, 'repos', 'demo') })).toBe(
       path.join(WORKSPACE_ROOT, 'repos', 'demo'),

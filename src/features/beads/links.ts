@@ -107,7 +107,14 @@ export function parseBeadLinkHref(
   const beadId = decodeUriComponentOrRaw(trimmed.slice(LEGACY_BEAD_SCHEME.length)).trim();
   if (!isBeadId(beadId)) return null;
 
-  return { beadId };
+  const currentDocumentPath = options.currentDocumentPath?.trim();
+  const workspaceAgentId = options.workspaceAgentId?.trim();
+
+  return {
+    beadId,
+    ...(currentDocumentPath ? { currentDocumentPath } : {}),
+    ...(workspaceAgentId ? { workspaceAgentId } : {}),
+  };
 }
 
 export function buildBeadTabId(target: BeadLinkTarget | string): string {
@@ -116,12 +123,15 @@ export function buildBeadTabId(target: BeadLinkTarget | string): string {
   }
 
   const workspaceAgentId = target.workspaceAgentId?.trim() || 'main';
+  const currentDocumentPath = target.currentDocumentPath?.trim() || '';
 
   if (!target.explicitTargetPath) {
-    return `bead:${workspaceAgentId}:${target.beadId}`;
+    if (!currentDocumentPath) {
+      return `bead:${workspaceAgentId}:${target.beadId}`;
+    }
+    return `bead://${workspaceAgentId}:${currentDocumentPath}:#${target.beadId}`;
   }
 
-  const currentDocumentPath = target.currentDocumentPath?.trim() || '';
   const explicitTargetPath = isAbsoluteFilesystemPath(target.explicitTargetPath)
     ? canonicalizeAbsoluteExplicitTargetPath(target.explicitTargetPath)
     : target.explicitTargetPath;

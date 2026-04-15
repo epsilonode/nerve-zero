@@ -20,9 +20,28 @@ describe('bead link helpers', () => {
     expect(buildBeadTabId('nerve-fms2')).toBe('bead:nerve-fms2');
   });
 
+  it('preserves current document context for legacy same-context bead links', () => {
+    expect(parseBeadLinkHref('bead:nerve-fms2', {
+      currentDocumentPath: 'repos/demo/docs/beads.md',
+      workspaceAgentId: 'research',
+    })).toEqual({
+      beadId: 'nerve-fms2',
+      currentDocumentPath: 'repos/demo/docs/beads.md',
+      workspaceAgentId: 'research',
+    });
+  });
+
   it('builds workspace-aware tab ids for shorthand bead tabs', () => {
     expect(buildBeadTabId({ beadId: 'nerve-fms2', workspaceAgentId: 'research' })).toBe('bead:research:nerve-fms2');
     expect(buildBeadTabId({ beadId: 'nerve-fms2' })).toBe('bead:main:nerve-fms2');
+  });
+
+  it('builds distinct shorthand tab ids when legacy bead links include document context', () => {
+    expect(buildBeadTabId({
+      beadId: 'nerve-fms2',
+      currentDocumentPath: 'repos/demo/docs/beads.md',
+      workspaceAgentId: 'research',
+    })).toBe('bead://research:repos/demo/docs/beads.md:#nerve-fms2');
   });
 
   it('parses explicit absolute bead URIs with custom payload parsing', () => {

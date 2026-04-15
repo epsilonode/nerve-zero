@@ -225,10 +225,53 @@ function assertRepoRootReadableDirectory(repoRoot: string): string {
   return normalizedRepoRoot;
 }
 
+function resolveAbsoluteCurrentDocumentPath(currentDocumentPath: string, workspaceRoot: string): string {
+  return assertPathWithinWorkspace(
+    path.isAbsolute(currentDocumentPath)
+      ? currentDocumentPath
+      : path.resolve(workspaceRoot, currentDocumentPath),
+    workspaceRoot,
+    'Current document path',
+  );
+}
+
+function resolveLegacyBeadLookupRepoRootFromCurrentDocumentPath(currentDocumentPath: string, workspaceRoot: string): string {
+  const absoluteDocumentPath = resolveAbsoluteCurrentDocumentPath(currentDocumentPath, workspaceRoot);
+  let currentDir = path.dirname(absoluteDocumentPath);
+
+  while (isPathWithinRoot(currentDir, workspaceRoot)) {
+    const beadDir = path.join(currentDir, '.beads');
+    try {
+      if (statSync(beadDir).isDirectory()) {
+        return currentDir;
+      }
+    } catch {
+      // Keep walking toward the workspace root.
+    }
+
+    if (currentDir === path.resolve(workspaceRoot)) {
+      break;
+    }
+
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) {
+      break;
+    }
+    currentDir = parentDir;
+  }
+
+  return path.dirname(absoluteDocumentPath);
+}
+
 export function resolveBeadLookupRepoRoot(options: BeadLookupOptions = {}): string {
   const workspaceRoot = resolveAgentWorkspace(options.workspaceAgentId).workspaceRoot;
+  const currentDocumentPath = options.currentDocumentPath?.trim();
 
   if (!options.targetPath?.trim()) {
+    if (currentDocumentPath) {
+      return normalizeBeadRepoRoot(resolveLegacyBeadLookupRepoRootFromCurrentDocumentPath(currentDocumentPath, workspaceRoot));
+    }
+
     const cwd = process.cwd();
     const defaultWorkspaceRoot = resolveAgentWorkspace().workspaceRoot;
     if (!isPathWithinRoot(cwd, defaultWorkspaceRoot)) {
@@ -242,18 +285,11 @@ export function resolveBeadLookupRepoRoot(options: BeadLookupOptions = {}): stri
     return normalizeBeadRepoRoot(assertPathWithinWorkspace(targetPath, workspaceRoot, 'Explicit bead target path'));
   }
 
-  const currentDocumentPath = options.currentDocumentPath?.trim();
   if (!currentDocumentPath) {
     throw new BeadValidationError('Relative explicit bead URIs require a current document path');
   }
 
-  const absoluteDocumentPath = assertPathWithinWorkspace(
-    path.isAbsolute(currentDocumentPath)
-      ? currentDocumentPath
-      : path.resolve(workspaceRoot, currentDocumentPath),
-    workspaceRoot,
-    'Current document path',
-  );
+  const absoluteDocumentPath = resolveAbsoluteCurrentDocumentPath(currentDocumentPath, workspaceRoot);
 
   const repoRoot = normalizeBeadRepoRoot(path.resolve(path.dirname(absoluteDocumentPath), targetPath));
   return assertPathWithinWorkspace(repoRoot, workspaceRoot, 'Resolved bead repo root');

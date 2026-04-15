@@ -320,6 +320,28 @@ describe('MarkdownRenderer', () => {
     });
   });
 
+  it('passes same-context metadata through for legacy bead links when document context is available', async () => {
+    const onOpenBeadId = vi.fn();
+    render(
+      <MarkdownRenderer
+        content="[viewer](bead:nerve-fms2)"
+        currentDocumentPath="repos/demo/docs/beads.md"
+        workspaceAgentId="research"
+        onOpenBeadId={onOpenBeadId}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('link', { name: 'viewer' }));
+
+    await waitFor(() => {
+      expect(onOpenBeadId).toHaveBeenCalledWith({
+        beadId: 'nerve-fms2',
+        currentDocumentPath: 'repos/demo/docs/beads.md',
+        workspaceAgentId: 'research',
+      });
+    });
+  });
+
   it('logs and swallows rejected bead link opens', async () => {
     const error = new Error('nope');
     const onOpenBeadId = vi.fn().mockRejectedValueOnce(error);
