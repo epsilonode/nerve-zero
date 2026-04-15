@@ -127,4 +127,120 @@ describe('MessageBubble', () => {
       expect(getByText('/workspace/capture.mov')).toBeTruthy();
     });
   });
+
+  it('re-renders when upload attachment mimeType changes', async () => {
+    const attachment = {
+      id: 'att-path',
+      origin: 'server_path' as const,
+      mode: 'file_reference' as const,
+      name: 'capture.mov',
+      mimeType: 'video/quicktime',
+      sizeBytes: 8_000_000,
+      reference: {
+        kind: 'local_path' as const,
+        path: '/workspace/capture.mov',
+        uri: 'file:///workspace/capture.mov',
+      },
+      preparation: {
+        sourceMode: 'file_reference' as const,
+        finalMode: 'file_reference' as const,
+        outcome: 'file_reference_ready' as const,
+        originalMimeType: 'video/quicktime',
+        originalSizeBytes: 8_000_000,
+      },
+      policy: { forwardToSubagents: true },
+    };
+
+    const { getByText, queryByText, rerender } = render(
+      <MessageBubble
+        msg={makeMessage({ rawText: 'Please review these.', uploadAttachments: [attachment] })}
+        index={0}
+        isCollapsed={false}
+        isMemoryCollapsed={false}
+        onToggleCollapse={() => {}}
+        onToggleMemory={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(getByText('video/quicktime')).toBeTruthy();
+    });
+
+    rerender(
+      <MessageBubble
+        msg={makeMessage({
+          rawText: 'Please review these.',
+          uploadAttachments: [{ ...attachment, mimeType: 'video/mp4' }],
+        })}
+        index={0}
+        isCollapsed={false}
+        isMemoryCollapsed={false}
+        onToggleCollapse={() => {}}
+        onToggleMemory={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(getByText('video/mp4')).toBeTruthy();
+      expect(queryByText('video/quicktime')).toBeNull();
+    });
+  });
+
+  it('re-renders when upload attachment size changes', async () => {
+    const attachment = {
+      id: 'att-path',
+      origin: 'server_path' as const,
+      mode: 'file_reference' as const,
+      name: 'capture.mov',
+      mimeType: 'video/quicktime',
+      sizeBytes: 1024,
+      reference: {
+        kind: 'local_path' as const,
+        path: '/workspace/capture.mov',
+        uri: 'file:///workspace/capture.mov',
+      },
+      preparation: {
+        sourceMode: 'file_reference' as const,
+        finalMode: 'file_reference' as const,
+        outcome: 'file_reference_ready' as const,
+        originalMimeType: 'video/quicktime',
+        originalSizeBytes: 1024,
+      },
+      policy: { forwardToSubagents: true },
+    };
+
+    const { getByText, queryByText, rerender } = render(
+      <MessageBubble
+        msg={makeMessage({ rawText: 'Please review these.', uploadAttachments: [attachment] })}
+        index={0}
+        isCollapsed={false}
+        isMemoryCollapsed={false}
+        onToggleCollapse={() => {}}
+        onToggleMemory={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(getByText('1 KB')).toBeTruthy();
+    });
+
+    rerender(
+      <MessageBubble
+        msg={makeMessage({
+          rawText: 'Please review these.',
+          uploadAttachments: [{ ...attachment, sizeBytes: 2048, preparation: { ...attachment.preparation, originalSizeBytes: 2048 } }],
+        })}
+        index={0}
+        isCollapsed={false}
+        isMemoryCollapsed={false}
+        onToggleCollapse={() => {}}
+        onToggleMemory={() => {}}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(getByText('2 KB')).toBeTruthy();
+      expect(queryByText('1 KB')).toBeNull();
+    });
+  });
 });

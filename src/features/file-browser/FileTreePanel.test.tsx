@@ -222,6 +222,32 @@ describe('FileTreePanel', () => {
       });
     });
 
+    it('shows an error toast when add to chat fails', async () => {
+      mockOnAddToChat.mockRejectedValueOnce(new Error('Failed to add file to chat'));
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      render(
+        <FileTreePanel
+          workspaceAgentId="agent-a"
+          onOpenFile={mockOnOpenFile}
+          onAddToChat={mockOnAddToChat}
+          addToChatEnabled={true}
+          onRemapOpenPaths={mockOnRemapOpenPaths}
+          onCloseOpenPaths={mockOnCloseOpenPaths}
+          collapsed={false}
+          onCollapseChange={vi.fn()}
+        />
+      );
+
+      fireEvent.contextMenu(screen.getByText('package.json'), new MouseEvent('contextmenu', { bubbles: true }));
+
+      const addToChatButton = await screen.findByText('Add to chat');
+      fireEvent.click(addToChatButton);
+
+      expect(await screen.findByText('Failed to add file to chat')).toBeInTheDocument();
+      expect(mockOnAddToChat).toHaveBeenCalledWith('package.json', 'file', 'agent-a');
+    });
+
     it('does not show "Add to chat" for directories', async () => {
       render(
         <FileTreePanel

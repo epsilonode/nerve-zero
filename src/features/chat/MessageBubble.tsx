@@ -409,6 +409,8 @@ export const MessageBubble = memo(MessageBubbleInner, (prev, next) => {
       || attachment.id !== nextAttachment.id
       || attachment.name !== nextAttachment.name
       || attachment.mode !== nextAttachment.mode
+      || attachment.sizeBytes !== nextAttachment.sizeBytes
+      || attachment.mimeType !== nextAttachment.mimeType
       || attachment.reference?.path !== nextAttachment.reference?.path;
   })) return false;
   

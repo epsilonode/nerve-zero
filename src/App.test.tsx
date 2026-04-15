@@ -477,6 +477,68 @@ describe('App save toast workspace scoping', () => {
     expect(addWorkspacePathSpy).not.toHaveBeenCalled();
   });
 
+  it('retries upload-config after a transient failure before hiding add-to-chat', async () => {
+    vi.useFakeTimers();
+    let uploadConfigAttempts = 0;
+
+    try {
+      global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+
+        if (url.includes('/api/upload-config')) {
+          uploadConfigAttempts += 1;
+          if (uploadConfigAttempts === 1) {
+            throw new Error('temporary upload-config failure');
+          }
+
+          return {
+            ok: true,
+            json: async () => ({
+              twoModeEnabled: false,
+              inlineEnabled: true,
+              fileReferenceEnabled: true,
+              modeChooserEnabled: false,
+              inlineAttachmentMaxMb: 4,
+              inlineImageContextMaxBytes: 32768,
+              inlineImageAutoDowngradeToFileReference: true,
+              inlineImageShrinkMinDimension: 512,
+              inlineImageMaxDimension: 2048,
+              inlineImageWebpQuality: 82,
+              exposeInlineBase64ToAgent: false,
+            }),
+          } as Response;
+        }
+
+        if (url.includes('/api/workspace/chatPathLinks')) {
+          return {
+            ok: false,
+            status: 404,
+            json: async () => ({ ok: false }),
+          } as Response;
+        }
+
+        return {
+          ok: true,
+          json: async () => ({}),
+        } as Response;
+      }) as typeof fetch;
+
+      render(<App />);
+
+      expect(screen.getByTestId('file-tree-panel-disabled')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Trigger add to chat' })).not.toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+
+      expect(screen.getByRole('button', { name: 'Trigger add to chat' })).toBeInTheDocument();
+      expect(uploadConfigAttempts).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('drops a late save conflict toast after switching workspaces before the save resolves', async () => {
     const alphaSave = createDeferred<SaveResult>();
     saveFileByAgent.alpha.mockReturnValue(alphaSave.promise);

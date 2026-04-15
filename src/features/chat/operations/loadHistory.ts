@@ -34,9 +34,18 @@ function imageExtensionFromMimeType(mimeType?: string): string {
   return subtype || 'png';
 }
 
+function dedupeExtractedImages(images: Array<{ url: string; alt?: string }>): Array<{ url: string; alt?: string }> {
+  const seen = new Set<string>();
+  return images.filter((image) => {
+    if (seen.has(image.url)) return false;
+    seen.add(image.url);
+    return true;
+  });
+}
+
 function extractLegacyMessageImages(
   message: ChatMessage,
-  options: { sessionKey?: string; timestamp: Date },
+  options: { sessionKey?: string; messageTimestampMs?: number },
 ): Array<{ url: string; alt?: string }> {
   const extracted: Array<{ url: string; alt?: string }> = [];
 
@@ -58,12 +67,12 @@ function extractLegacyMessageImages(
     });
   }
 
-  if (options.sessionKey && Array.isArray(message.content)) {
+  if (options.sessionKey && Number.isFinite(options.messageTimestampMs) && Array.isArray(message.content)) {
+    const timestampMs = options.messageTimestampMs as number;
     let imageIndex = 0;
     for (const block of message.content) {
       if (block.type !== 'image') continue;
       if (block.omitted) {
-        const timestampMs = options.timestamp.getTime();
         const extension = imageExtensionFromMimeType(block.mimeType || block.source?.media_type);
         extracted.push({
           url: `/api/sessions/media?sessionKey=${encodeURIComponent(options.sessionKey)}&timestamp=${timestampMs}&imageIndex=${imageIndex}`,
@@ -245,7 +254,9 @@ function splitSystemEvents(text: string): Array<{ role: 'event' | 'user'; text: 
 
 export function splitToolCallMessage(m: ChatMessage, options: { sessionKey?: string } = {}): ChatMsg[] {
   const ts = m.timestamp || m.createdAt || m.ts || null;
-  const timestamp = ts ? new Date(ts as string | number) : new Date();
+  const parsedTimestamp = ts ? new Date(ts as string | number) : null;
+  const hasPersistedTimestamp = Boolean(parsedTimestamp && Number.isFinite(parsedTimestamp.getTime()));
+  const timestamp = hasPersistedTimestamp ? parsedTimestamp as Date : new Date();
 
   // Only interleave for assistant messages with array content containing tool_use
   if (m.role === 'assistant' && Array.isArray(m.content)) {
@@ -384,8 +395,11 @@ export function splitToolCallMessage(m: ChatMessage, options: { sessionKey?: str
   const { cleaned: text, images: extractedImages } = isAssistant
     ? extractImages(chartCleaned)
     : { cleaned: chartCleaned, images: [] };
-  const legacyExtractedImages = extractLegacyMessageImages(m, { sessionKey: options.sessionKey, timestamp });
-  const combinedExtractedImages = [...extractedImages, ...legacyExtractedImages];
+  const legacyExtractedImages = extractLegacyMessageImages(m, {
+    sessionKey: options.sessionKey,
+    messageTimestampMs: hasPersistedTimestamp ? timestamp.getTime() : undefined,
+  });
+  const combinedExtractedImages = dedupeExtractedImages([...extractedImages, ...legacyExtractedImages]);
 
   // Extract image content blocks (base64 images from gateway)
   const contentImages = Array.isArray(m.content) ? extractImageBlocks(m.content as ContentBlock[]) : [];

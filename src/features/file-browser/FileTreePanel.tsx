@@ -801,7 +801,13 @@ export function FileTreePanel({
               className="w-full px-3 py-1.5 text-left text-xs text-foreground hover:bg-muted/60 flex items-center gap-2"
               onClick={() => {
                 setContextMenu(null);
-                void onAddToChat?.(menuEntry.path, 'file', workspaceAgentId);
+                void Promise
+                  .resolve(onAddToChat?.(menuEntry.path, 'file', workspaceAgentId))
+                  .catch((error: unknown) => {
+                    const message = error instanceof Error ? error.message : 'Failed to add file to chat';
+                    console.error('[FileTreePanel] add-to-chat failed:', error);
+                    showToastForAgent(workspaceAgentId, { type: 'error', message }, 4500);
+                  });
               }}
             >
               <Paperclip size={12} />

@@ -369,20 +369,50 @@ export default function App({ onLogout }: AppProps) {
 
   useEffect(() => {
     const controller = new AbortController();
+    let retryTimer: number | null = null;
+    let attempts = 0;
+    const maxAttempts = 3;
 
-    void fetch('/api/upload-config', { signal: controller.signal })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (controller.signal.aborted) return;
-        setAddToChatEnabled(Boolean(data?.fileReferenceEnabled));
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) {
-          setAddToChatEnabled(false);
-        }
-      });
+    const loadUploadConfig = () => {
+      attempts += 1;
 
-    return () => controller.abort();
+      void fetch('/api/upload-config', { signal: controller.signal })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (controller.signal.aborted) return;
+
+          if (data) {
+            setAddToChatEnabled(Boolean(data.fileReferenceEnabled));
+            return;
+          }
+
+          if (attempts >= maxAttempts) {
+            setAddToChatEnabled(false);
+            return;
+          }
+
+          retryTimer = window.setTimeout(loadUploadConfig, 1000);
+        })
+        .catch(() => {
+          if (controller.signal.aborted) return;
+
+          if (attempts >= maxAttempts) {
+            setAddToChatEnabled(false);
+            return;
+          }
+
+          retryTimer = window.setTimeout(loadUploadConfig, 1000);
+        });
+    };
+
+    loadUploadConfig();
+
+    return () => {
+      controller.abort();
+      if (retryTimer !== null) {
+        window.clearTimeout(retryTimer);
+      }
+    };
   }, []);
 
   useEffect(() => {

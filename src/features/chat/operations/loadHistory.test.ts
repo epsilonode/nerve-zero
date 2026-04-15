@@ -276,6 +276,37 @@ describe('processChatMessages', () => {
       { url: 'https://example.com/generated.png', alt: 'generated.png' },
     ]);
   });
+
+  it('does not synthesize omitted transcript image URLs without a persisted timestamp', () => {
+    const result = processChatMessages([
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'generated image' },
+          { type: 'image', omitted: true, mimeType: 'image/png' },
+        ],
+      },
+    ], { sessionKey: 'agent:main:main' });
+
+    expect(result).toHaveLength(1);
+    expect(result[0].extractedImages).toBeUndefined();
+  });
+
+  it('deduplicates merged image references while preserving order', () => {
+    const result = processChatMessages([
+      {
+        role: 'assistant',
+        content: '![generated](https://example.com/generated.png)\n![other](https://example.com/other.png)',
+        MediaUrls: ['https://example.com/generated.png'],
+      },
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].extractedImages?.map((img) => img.url)).toEqual([
+      'https://example.com/generated.png',
+      'https://example.com/other.png',
+    ]);
+  });
 });
 
 describe('loadChatHistory', () => {
