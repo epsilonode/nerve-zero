@@ -17,8 +17,8 @@ vi.mock('@/contexts/SessionContext', () => ({
 import { buildModelCatalogUiError, buildSelectableModelList, type GatewayModelInfo, useModelEffort } from './useModelEffort';
 
 const CONFIGURED_MODELS: GatewayModelInfo[] = [
-  { id: 'zai/glm-4.7', label: 'glm-4.7', provider: 'zai' },
-  { id: 'ollama/qwen2.5:7b-instruct-q5_K_M', label: 'qwen-local', provider: 'ollama' },
+  { id: 'zai/glm-4.7', label: 'glm-4.7', provider: 'zai', role: 'primary' },
+  { id: 'ollama/qwen2.5:7b-instruct-q5_K_M', label: 'qwen-local', provider: 'ollama', role: 'fallback' },
 ];
 
 function jsonResponse(data: unknown, init: { ok?: boolean; status?: number } = {}) {
@@ -86,6 +86,9 @@ describe('useModelEffort', () => {
       if (url.startsWith('/api/gateway/session-info?sessionKey=')) {
         return Promise.resolve(jsonResponse({}));
       }
+      if (url.startsWith('/api/sessions/runtime?sessionKey=')) {
+        return Promise.resolve(jsonResponse({ ok: true, model: null, thinking: null, missing: true }));
+      }
       throw new Error(`Unexpected fetch: ${url}`);
     }) as typeof globalThis.fetch;
   });
@@ -106,10 +109,112 @@ describe('useModelEffort', () => {
     });
 
     expect(result.current.modelOptions).toEqual([
+      { value: 'primary', label: 'primary' },
       { value: 'zai/glm-4.7', label: 'glm-4.7' },
       { value: 'ollama/qwen2.5:7b-instruct-q5_K_M', label: 'qwen-local' },
       { value: 'openrouter/xiaomi/mimo-v2-pro', label: 'xiaomi/mimo-v2-pro' },
     ]);
+  });
+
+  it('keeps inherited effort selected while displaying the effective default value', async () => {
+    mockUseGateway.mockReturnValue({
+      rpc: vi.fn(),
+      connectionState: 'connected',
+      model: 'zai/glm-4.7',
+      thinking: 'medium',
+    });
+
+    mockUseSessionContext.mockReturnValue({
+      currentSession: 'agent:main:main',
+      sessions: [
+        { key: 'agent:main:main', model: 'openai-codex/gpt-5.4', thinking: 'medium' },
+      ],
+      updateSession: vi.fn(),
+    });
+
+    globalThis.fetch = vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url === '/api/gateway/models') {
+        return Promise.resolve(jsonResponse({
+          models: [
+            { id: 'openai/gpt-5.4', label: 'gpt-5.4', provider: 'openai', role: 'primary' },
+            { id: 'zai/glm-4.7', label: 'glm-4.7', provider: 'zai', role: 'fallback' },
+          ],
+          error: null,
+        }));
+      }
+      if (url.startsWith('/api/gateway/session-info?sessionKey=')) {
+        return Promise.resolve(jsonResponse({}));
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof globalThis.fetch;
+
+    const { result } = renderHook(() => useModelEffort());
+
+    await waitFor(() => {
+      expect(result.current.selectedModel).toBe('primary');
+      expect(result.current.selectedEffort).toBe('thinkingDefault');
+      expect(result.current.selectedEffortLabel).toBe('medium');
+      expect(result.current.effortOptions[0]).toEqual({ value: 'thinkingDefault', label: 'medium (default)' });
+    });
+  });
+
+  it('uses transcript runtime defaults to label inherited effort when session summaries omit thinking', async () => {
+    mockUseGateway.mockReturnValue({
+      rpc: vi.fn(),
+      connectionState: 'connected',
+      model: 'zai/glm-4.7',
+      thinking: '--',
+    });
+
+    mockUseSessionContext.mockReturnValue({
+      currentSession: 'agent:smoke257:main',
+      sessions: [
+        { key: 'agent:smoke257:main', id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', model: 'zai/glm-4.7' },
+      ],
+      updateSession: vi.fn(),
+    });
+
+    globalThis.fetch = vi.fn((input: string | URL | Request) => {
+      const url = String(input);
+      if (url === '/api/gateway/models') {
+        return Promise.resolve(jsonResponse({ models: CONFIGURED_MODELS, error: null }));
+      }
+      if (url === '/api/gateway/session-info?sessionKey=agent%3Asmoke257%3Amain') {
+        return Promise.resolve(jsonResponse({}));
+      }
+      if (url === '/api/sessions/runtime?sessionKey=agent%3Asmoke257%3Amain') {
+        return Promise.resolve(jsonResponse({ ok: true, model: 'openai-codex/gpt-5.4', thinking: 'medium', missing: false }));
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    }) as typeof globalThis.fetch;
+
+    const { result } = renderHook(() => useModelEffort());
+
+    await waitFor(() => {
+      expect(result.current.selectedEffort).toBe('thinkingDefault');
+      expect(result.current.selectedEffortLabel).toBe('medium');
+      expect(result.current.effortOptions[0]).toEqual({ value: 'thinkingDefault', label: 'medium (default)' });
+    });
+  });
+
+  it('preserves explicit effort overrides when present', async () => {
+    mockUseSessionContext.mockReturnValue({
+      currentSession: 'agent:main:subagent:explicit',
+      sessions: [
+        { key: 'agent:main:main', model: 'zai/glm-4.7' },
+        { key: 'agent:main:subagent:explicit', model: 'zai/glm-4.7', thinking: 'medium', thinkingLevel: 'high' },
+      ],
+      updateSession: vi.fn(),
+    });
+
+    const { result } = renderHook(() => useModelEffort());
+
+    await waitFor(() => {
+      expect(result.current.selectedModel).toBe('primary');
+      expect(result.current.selectedEffort).toBe('high');
+      expect(result.current.selectedEffortLabel).toBe('high');
+    });
   });
 });
 

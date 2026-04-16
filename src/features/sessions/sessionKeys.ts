@@ -6,6 +6,7 @@ const SUBAGENT_RE = /^((?:agent:[^:]+)):subagent:.+$/;
 const CRON_RE = /^((?:agent:[^:]+)):cron:[^:]+$/;
 const CRON_RUN_RE = /^(.+:cron:[^:]+):run:.+$/;
 const DIRECT_RE = /^((?:agent:[^:]+))(?::[^:]+)*:direct:.+$/;
+const CHANNEL_RE = /^((?:agent:[^:]+))(?::[^:]+)*:channel:.+$/;
 
 export type SessionType = 'main' | 'subagent' | 'cron' | 'cron-run';
 
@@ -57,6 +58,9 @@ export function getRootAgentId(sessionKey: string): string | null {
   const directMatch = sessionKey.match(DIRECT_RE);
   if (directMatch) return directMatch[1].split(':')[1] ?? null;
 
+  const channelMatch = sessionKey.match(CHANNEL_RE);
+  if (channelMatch) return channelMatch[1].split(':')[1] ?? null;
+
   return null;
 }
 
@@ -77,6 +81,9 @@ export function inferParentSessionKey(sessionKey: string): string | null {
 
   const directMatch = sessionKey.match(DIRECT_RE);
   if (directMatch) return `${directMatch[1]}:main`;
+
+  const channelMatch = sessionKey.match(CHANNEL_RE);
+  if (channelMatch) return `${channelMatch[1]}:main`;
 
   return null;
 }
@@ -123,20 +130,28 @@ export function getTopLevelAgentSessions(sessions: Session[]): Session[] {
     });
 }
 
+export function extractIdentityName(content: string): string | null {
+  const normalized = content.replace(/\*\*/g, '');
+  const match = normalized.match(/^\s*(?:[-*]\s*)?Name\s*:\s*(.+?)\s*$/im);
+  return match?.[1]?.trim() || null;
+}
+
 export function getSessionDisplayLabel(session: Session, agentName = 'Agent'): string {
   const sessionKey = getSessionKey(session);
+  const rootId = getRootAgentId(sessionKey);
+  const identityName = session.identityName?.trim();
 
   if (sessionKey === 'agent:main:main') {
     return `${agentName} (main)`;
   }
 
+  if (isTopLevelAgentSessionKey(sessionKey)) {
+    if (identityName && rootId) return `${identityName} (${rootId})`;
+    if (rootId) return rootId;
+  }
+
   if (session.label?.trim()) return session.label.trim();
   if (session.displayName?.trim()) return session.displayName.trim();
-
-  if (isTopLevelAgentSessionKey(sessionKey)) {
-    const rootId = getRootAgentId(sessionKey);
-    if (rootId) return `Agent ${rootId}`;
-  }
 
   if (isCronSessionKey(sessionKey)) {
     return `Cron ${sessionKey.split(':')[3]?.slice(0, 8) || ''}`.trim();

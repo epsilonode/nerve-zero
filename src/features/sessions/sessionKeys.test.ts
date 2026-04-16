@@ -3,6 +3,7 @@ import type { Session } from '@/types';
 import { getSessionKey } from '@/types';
 import {
   buildAgentRootSessionKey,
+  extractIdentityName,
   getAgentRegistrationName,
   getRootAgentId,
   getRootAgentSessionKey,
@@ -20,6 +21,13 @@ function session(sessionKey: string, extra: Partial<Session> = {}): Session {
 }
 
 describe('sessionKeys', () => {
+  it('extracts agent names from IDENTITY.md variants', () => {
+    expect(extractIdentityName('# IDENTITY.md - Who Am I?\n\n- **Name:** Blende\n- **Creature:** AI workshop familiar\n')).toBe('Blende');
+    expect(extractIdentityName('# IDENTITY.md\n- Name: forge\n- Role: Coding\n')).toBe('forge');
+    expect(extractIdentityName('# IDENTITY.md\nName: Reviewer Prime\nRole: Review agent\n')).toBe('Reviewer Prime');
+    expect(extractIdentityName('# IDENTITY.md\n- Role: Coding only\n')).toBeNull();
+  });
+
   it('detects top-level agent sessions', () => {
     expect(isTopLevelAgentSessionKey('agent:main:main')).toBe(true);
     expect(isTopLevelAgentSessionKey('agent:reviewer:main')).toBe(true);
@@ -33,7 +41,7 @@ describe('sessionKeys', () => {
     expect(getRootAgentSessionKey('agent:reviewer:cron:daily:run:xyz')).toBe('agent:reviewer:main');
   });
 
-  it('resolves root agent id and parent for direct message sessions', () => {
+  it('resolves root agent id and parent for direct and channel delivery sessions', () => {
     // per-channel-peer: agent:X:<channel>:direct:<peerId>
     expect(getRootAgentId('agent:reviewer:telegram:direct:123')).toBe('reviewer');
     expect(getRootAgentSessionKey('agent:reviewer:telegram:direct:123')).toBe('agent:reviewer:main');
@@ -46,6 +54,11 @@ describe('sessionKeys', () => {
     // per-peer: agent:X:direct:<peerId>
     expect(getRootAgentId('agent:main:direct:456')).toBe('main');
     expect(inferParentSessionKey('agent:main:direct:456')).toBe('agent:main:main');
+
+    // channel sessions should also resolve back to their root agent
+    expect(getRootAgentId('agent:varys:discord:channel:1488657713385701408')).toBe('varys');
+    expect(getRootAgentSessionKey('agent:varys:discord:channel:1488657713385701408')).toBe('agent:varys:main');
+    expect(inferParentSessionKey('agent:varys:discord:channel:1488657713385701408')).toBe('agent:varys:main');
 
     // root sessions still return null parent
     expect(inferParentSessionKey('agent:main:main')).toBeNull();
@@ -80,12 +93,22 @@ describe('sessionKeys', () => {
     expect(pickDefaultSessionKey(sessions)).toBe('agent:main:main');
   });
 
-  it('builds display labels from label, displayName, then root id', () => {
-    expect(getSessionDisplayLabel(session('agent:reviewer:main', { label: 'Reviewer', displayName: 'webchat:reviewer' }), 'Nerve')).toBe('Reviewer');
-    expect(getSessionDisplayLabel(session('agent:reviewer:main', { displayName: 'Reviewer Prime' }), 'Nerve')).toBe('Reviewer Prime');
-    expect(getSessionDisplayLabel(session('agent:reviewer:main', { label: 'Reviewer' }), 'Nerve')).toBe('Reviewer');
-    expect(getSessionDisplayLabel(session('agent:reviewer:main'), 'Nerve')).toBe('Agent reviewer');
+  it('builds display labels from identity name, then root id for root sessions', () => {
+    expect(getSessionDisplayLabel(session('agent:reviewer:main', { label: 'Reviewer', displayName: 'webchat:reviewer' }), 'Nerve')).toBe('reviewer');
+    expect(getSessionDisplayLabel(session('agent:reviewer:main', { displayName: 'Reviewer Prime' }), 'Nerve')).toBe('reviewer');
+    expect(getSessionDisplayLabel(session('agent:reviewer:main', { label: 'Reviewer' }), 'Nerve')).toBe('reviewer');
+    expect(getSessionDisplayLabel(session('agent:reviewer:main', { identityName: 'Reviewer Prime' }), 'Nerve')).toBe('Reviewer Prime (reviewer)');
+    expect(getSessionDisplayLabel(session('agent:reviewer:main'), 'Nerve')).toBe('reviewer');
     expect(getSessionDisplayLabel(session('agent:main:main'), 'Nerve')).toBe('Nerve (main)');
+  });
+
+  it('ignores gateway display names for non-main root sessions', () => {
+    expect(
+      getSessionDisplayLabel(
+        session('agent:coding:main', { displayName: 'Jordan Humphreys id:8243587348' }),
+        'Nerve',
+      ),
+    ).toBe('coding');
   });
 
   it('keeps the main root label canonical even if gateway metadata says heartbeat', () => {

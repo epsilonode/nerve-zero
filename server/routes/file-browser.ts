@@ -17,6 +17,8 @@
 
 import { Hono, type Context } from 'hono';
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
+import { Readable } from 'node:stream';
 import path from 'node:path';
 import {
   getWorkspaceRoot,
@@ -89,6 +91,7 @@ async function listDirectory(
   dirPath: string,
   basePath: string,
   depth: number,
+  showHidden: boolean,
 ): Promise<TreeEntry[]> {
   const entries: TreeEntry[] = [];
 
@@ -113,8 +116,8 @@ async function listDirectory(
     if (inTrash) {
       // Internal metadata file for restore bookkeeping.
       if (item.name === '.index.json') continue;
-    // FILE_BROWSER_ROOT: Show all files when custom root is set, but always hide .trash folder
-    } else if (!config.fileBrowserRoot && item.name.startsWith('.') && item.name !== '.nerveignore' && item.name !== '.trash') {
+    // Hide dotfiles unless showHidden=true, except for .nerveignore and .trash; custom roots still hide .trash.
+    } else if (!showHidden && item.name.startsWith('.') && item.name !== '.nerveignore' && item.name !== '.trash') {
       continue;
     } else if (config.fileBrowserRoot && item.name === '.trash') {
       continue;
@@ -129,7 +132,7 @@ async function listDirectory(
         path: relativePath,
         type: 'directory',
         children: depth > 1
-          ? await listDirectory(fullPath, relativePath, depth - 1)
+          ? await listDirectory(fullPath, relativePath, depth - 1, showHidden)
           : null,
       });
     } else if (item.isFile()) {
@@ -161,9 +164,13 @@ function handleFileOpError(c: Context, err: unknown) {
 }
 
 /** Convert gateway file list to TreeEntry format for the UI. */
-function gatewayFilesToTree(files: Awaited<ReturnType<typeof gatewayFilesList>>): TreeEntry[] {
+function gatewayFilesToTree(
+  files: Awaited<ReturnType<typeof gatewayFilesList>>,
+  showHidden: boolean,
+): TreeEntry[] {
   return files
     .filter((f) => !f.missing)
+    .filter((f) => showHidden || !f.name.startsWith('.') || f.name === '.nerveignore' || f.name === '.trash')
     .map((f) => ({
       name: f.name,
       path: f.name,
@@ -171,6 +178,19 @@ function gatewayFilesToTree(files: Awaited<ReturnType<typeof gatewayFilesList>>)
       size: f.size,
       mtime: f.updatedAtMs,
     }));
+}
+
+function normalizeWorkspaceLookupPath(input: string): string {
+  const trimmed = input.trim();
+  if (trimmed === '/workspace' || trimmed === '/workspace/') {
+    return '.';
+  }
+
+  if (trimmed.startsWith('/workspace/')) {
+    return trimmed.slice('/workspace/'.length);
+  }
+
+  return trimmed;
 }
 
 // ── GET /api/files/tree ──────────────────────────────────────────────
@@ -186,6 +206,7 @@ app.get('/api/files/tree', async (c) => {
   const root = workspace.workspaceRoot;
   const subPath = c.req.query('path') || '';
   const depth = Math.min(Math.max(Number(c.req.query('depth')) || 1, 1), 5);
+  const showHidden = c.req.query('showHidden') === 'true';
 
   // Check if workspace is local
   const isLocal = await isWorkspaceLocal(root);
@@ -213,7 +234,7 @@ app.get('/api/files/tree', async (c) => {
       targetDir = root;
     }
 
-    const entries = await listDirectory(targetDir, subPath, depth);
+    const entries = await listDirectory(targetDir, subPath, depth, showHidden);
 
     return c.json({
       ok: true,
@@ -243,7 +264,7 @@ app.get('/api/files/tree', async (c) => {
 
   try {
     const remoteFiles = await gatewayFilesList(workspace.agentId);
-    const entries = gatewayFilesToTree(remoteFiles);
+    const entries = gatewayFilesToTree(remoteFiles, showHidden);
     return c.json({
       ok: true,
       root: '.',
@@ -273,6 +294,7 @@ app.get('/api/files/tree', async (c) => {
 
 app.get('/api/files/resolve', async (c) => {
   const targetPath = c.req.query('path');
+  const relativeTo = c.req.query('relativeTo');
   if (!targetPath) {
     return c.json({ ok: false, error: 'Missing path parameter' }, 400);
   }
@@ -288,9 +310,22 @@ app.get('/api/files/resolve', async (c) => {
     return c.json({ ok: false, error: 'Not supported for remote workspaces', code: 'REMOTE_WORKSPACE' }, 501);
   }
 
+  const rawTargetPath = targetPath.trim().replace(/\\/g, '/');
+  const normalizedTargetPath = normalizeWorkspaceLookupPath(rawTargetPath);
+  const workspaceRelativePath = (() => {
+    if (!relativeTo) return normalizedTargetPath;
+    if (rawTargetPath === '/workspace' || rawTargetPath === '/workspace/') return '.';
+    if (rawTargetPath.startsWith('/workspace/')) return rawTargetPath.slice('/workspace/'.length);
+    if (rawTargetPath.startsWith('/')) return rawTargetPath.replace(/^\/+/, '');
+
+    const normalizedRelativeTo = normalizeWorkspaceLookupPath(relativeTo.replace(/\\/g, '/')).replace(/^\/+/, '');
+    const relativeDir = path.posix.dirname(normalizedRelativeTo);
+    return path.posix.normalize(path.posix.join(relativeDir === '.' ? '' : relativeDir, normalizedTargetPath));
+  })();
+
   const resolved = await resolveWorkspacePathForRoot(
     workspace.workspaceRoot,
-    targetPath,
+    workspaceRelativePath,
     { allowNonExistent: true },
   );
   if (!resolved) {
@@ -721,6 +756,7 @@ const MIME_TYPES: Record<string, string> = {
   '.avif': 'image/avif',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
+  '.pdf': 'application/pdf',
 };
 
 /** Check if a file is a supported image. */
@@ -762,18 +798,94 @@ app.get('/api/files/raw', async (c) => {
     if (!stat.isFile()) {
       return c.json({ ok: false, error: 'Not a file' }, 400);
     }
-    // Cap at 10MB for images
-    if (stat.size > 10_485_760) {
-      return c.json({ ok: false, error: 'File too large (max 10MB)' }, 413);
+    // Cap at 10MB for images, 50 MB for PDFs (can adjust as needed)
+    const maxSize = ext === '.pdf' ? 52_428_800 : 10_485_760;
+    if (stat.size > maxSize) {
+      return c.json({ ok: false, error: `File too large (max ${ext === '.pdf' ? '50MB' : '10MB'})` }, 413);
     }
 
-    const buffer = await fs.readFile(resolved);
-    return new Response(buffer, {
-      headers: {
-        'Content-Type': mime,
-        'Content-Length': String(stat.size),
-        'Cache-Control': 'no-cache',
-      },
+    // Parse Range header for PDFs to support partial content requests
+    let start = 0;
+    let end = stat.size - 1;
+    let statusCode = 200;
+    let rangeHeader: string | undefined;
+
+    const rangeHeaderValue = c.req.header('range');
+    if (rangeHeaderValue && ext === '.pdf') {
+      // Match both explicit ranges (bytes=100-200) and suffix ranges (bytes=-500)
+      const rangeMatch = rangeHeaderValue.match(/^bytes=(\d*)-(\d*)$/);
+      if (rangeMatch) {
+        const hasSuffix = rangeMatch[1] === '';
+        let rangeStart: number;
+        let rangeEnd: number;
+        let isValid = false;
+
+        if (hasSuffix) {
+          // Suffix range: bytes=-500 means last 500 bytes
+          const suffixLen = parseInt(rangeMatch[2], 10);
+          rangeStart = Math.max(0, stat.size - suffixLen);
+          rangeEnd = stat.size - 1;
+          isValid = suffixLen > 0;
+        } else {
+          rangeStart = parseInt(rangeMatch[1], 10);
+          rangeEnd = rangeMatch[2] ? parseInt(rangeMatch[2], 10) : stat.size - 1;
+          isValid = rangeStart >= 0 && rangeStart <= rangeEnd && rangeEnd < stat.size;
+        }
+
+        // Validate and apply range
+        if (isValid) {
+          start = rangeStart;
+          end = rangeEnd;
+          statusCode = 206;
+          rangeHeader = `bytes ${start}-${end}/${stat.size}`;
+        } else {
+          // Invalid range
+          return new Response('', {
+            status: 416,
+            headers: {
+              'Content-Range': `bytes */${stat.size}`,
+            },
+          });
+        }
+      }
+    }
+
+    // Stream file with optional range support
+    const fileStream = fsSync.createReadStream(resolved, { start, end });
+    fileStream.on('error', (err) => {
+      console.error(`[file-browser] Stream error for ${filePath}:`, err.message);
+    });
+
+    // Add error listener to surface stream failures for easier debugging
+    fileStream.on('error', (err) => {
+      console.error('[file-browser] fileStream error:', {
+        path: resolved,
+        rangeStart: start,
+        rangeEnd: end,
+        error: (err as Error).message,
+      });
+    });
+    
+    // Convert Node.js stream to Web Stream using Node's built-in conversion
+    const webStream = Readable.toWeb(fileStream);
+    
+    const responseHeaders: Record<string, string> = {
+      'Content-Type': mime,
+      'Content-Length': String(end - start + 1),
+      'Cache-Control': 'no-cache',
+    };
+
+    // Add Range headers for partial content responses
+    if (ext === '.pdf') {
+      responseHeaders['Accept-Ranges'] = 'bytes';
+      if (rangeHeader) {
+        responseHeaders['Content-Range'] = rangeHeader;
+      }
+    }
+
+    return new Response(webStream, {
+      status: statusCode,
+      headers: responseHeaders,
     });
   } catch {
     return c.json({ ok: false, error: 'Failed to read file' }, 500);

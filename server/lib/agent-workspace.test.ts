@@ -58,6 +58,47 @@ describe('agent-workspace', () => {
     });
   });
 
+  it('prefers explicitly configured agent workspaces from openclaw.json', async () => {
+    const configDir = path.join(homeDir, '.openclaw');
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.writeFile(path.join(configDir, 'openclaw.json'), JSON.stringify({
+      agents: {
+        defaults: { workspace: '/managed/workspaces' },
+        list: [
+          { id: 'research', workspace: '/vaults/research' },
+        ],
+      },
+    }, null, 2));
+
+    const { resolveAgentWorkspace } = await loadModule();
+
+    expect(resolveAgentWorkspace('research')).toEqual({
+      agentId: 'research',
+      workspaceRoot: '/vaults/research',
+      memoryPath: '/vaults/research/MEMORY.md',
+      memoryDir: '/vaults/research/memory',
+    });
+  });
+
+  it('uses agents.defaults.workspace for new non-main agents when configured', async () => {
+    const configDir = path.join(homeDir, '.openclaw');
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.writeFile(path.join(configDir, 'openclaw.json'), JSON.stringify({
+      agents: {
+        defaults: { workspace: '/managed/workspaces' },
+      },
+    }, null, 2));
+
+    const { resolveAgentWorkspace } = await loadModule();
+
+    expect(resolveAgentWorkspace('research')).toEqual({
+      agentId: 'research',
+      workspaceRoot: '/managed/workspaces/research',
+      memoryPath: '/managed/workspaces/research/MEMORY.md',
+      memoryDir: '/managed/workspaces/research/memory',
+    });
+  });
+
   it('returns workspaceRoot, memoryPath, and memoryDir together', async () => {
     const { resolveAgentWorkspace } = await loadModule();
 

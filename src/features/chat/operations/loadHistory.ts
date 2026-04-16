@@ -5,7 +5,7 @@
  * All functions here are pure (no React hooks, setState, or refs).
  */
 import { generateMsgId } from '@/features/chat/types';
-import type { ChatMsg, ChatMsgRole, ToolGroupEntry } from '@/features/chat/types';
+import type { ChatMsg, ChatMsgRole, ToolGroupEntry, UploadAttachmentDescriptor } from '@/features/chat/types';
 import type { ChatMessage, ContentBlock, ChatHistoryResponse } from '@/types';
 import { extractText, describeToolUse, renderMarkdown, renderToolResults } from '@/utils/helpers';
 import { decodeHtmlEntities } from '@/lib/formatting';
@@ -14,6 +14,77 @@ import { extractChartMarkers } from '@/features/charts/extractCharts';
 import { extractEditBlocks, extractWriteBlocks } from '@/features/chat/edit-blocks';
 import { extractImages } from '@/features/chat/extractImages';
 import type { MessageImage } from '@/features/chat/types';
+
+function toArray<T>(value: T | T[] | undefined): T[] {
+  if (Array.isArray(value)) return value;
+  return value ? [value] : [];
+}
+
+function getFilenameFromPathish(value: string, fallback: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return fallback;
+  const segments = trimmed.split('/').filter(Boolean);
+  return segments[segments.length - 1] || fallback;
+}
+
+function imageExtensionFromMimeType(mimeType?: string): string {
+  if (!mimeType?.startsWith('image/')) return 'png';
+  const subtype = mimeType.slice('image/'.length).toLowerCase();
+  if (subtype === 'jpeg') return 'jpg';
+  return subtype || 'png';
+}
+
+function dedupeExtractedImages(images: Array<{ url: string; alt?: string }>): Array<{ url: string; alt?: string }> {
+  const seen = new Set<string>();
+  return images.filter((image) => {
+    if (seen.has(image.url)) return false;
+    seen.add(image.url);
+    return true;
+  });
+}
+
+function extractLegacyMessageImages(
+  message: ChatMessage,
+  options: { sessionKey?: string; messageTimestampMs?: number },
+): Array<{ url: string; alt?: string }> {
+  const extracted: Array<{ url: string; alt?: string }> = [];
+
+  for (const mediaPath of [...toArray(message.MediaPath), ...toArray(message.MediaPaths)]) {
+    const trimmedPath = mediaPath.trim();
+    if (!trimmedPath) continue;
+    extracted.push({
+      url: `/api/files?path=${encodeURIComponent(trimmedPath)}`,
+      alt: getFilenameFromPathish(trimmedPath, 'image'),
+    });
+  }
+
+  for (const mediaUrl of [...toArray(message.MediaUrl), ...toArray(message.MediaUrls)]) {
+    const trimmedUrl = mediaUrl.trim();
+    if (!trimmedUrl) continue;
+    extracted.push({
+      url: trimmedUrl,
+      alt: getFilenameFromPathish(trimmedUrl.split('?')[0] || trimmedUrl, 'image'),
+    });
+  }
+
+  if (options.sessionKey && Number.isFinite(options.messageTimestampMs) && Array.isArray(message.content)) {
+    const timestampMs = options.messageTimestampMs as number;
+    let imageIndex = 0;
+    for (const block of message.content) {
+      if (block.type !== 'image') continue;
+      if (block.omitted) {
+        const extension = imageExtensionFromMimeType(block.mimeType || block.source?.media_type);
+        extracted.push({
+          url: `/api/sessions/media?sessionKey=${encodeURIComponent(options.sessionKey)}&timestamp=${timestampMs}&imageIndex=${imageIndex}`,
+          alt: `message-${timestampMs}-image-${imageIndex}.${extension}`,
+        });
+      }
+      imageIndex += 1;
+    }
+  }
+
+  return extracted;
+}
 
 /** Convert an image content block (from gateway) into a MessageImage for rendering. */
 function imageBlockToMessageImage(block: ContentBlock): MessageImage | null {
@@ -52,6 +123,32 @@ const SYSTEM_NOTIFICATION_PATTERNS = [
   /^\[System Message\].*?(?:subagent|task|cron).*?(?:completed|finished|failed)/is,
 ];
 
+/** Matches timestamped gateway-injected system lines, including untrusted variants. */
+const SYSTEM_EVENT_LINE = /^System(?: \(untrusted\))?: \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})? [^\]]*\]/;
+
+/** Internal follow-up lines appended after async exec/cron system events. */
+const SYSTEM_EVENT_FOLLOWUP_LINE = /^(?:An async command you ran earlier has completed\.|A scheduled reminder has been triggered\.|A scheduled cron event was triggered(?:, but no event content was found)?\.|Handle this reminder internally\.|Handle this internally\.|Handle the result internally\.?|Do not relay it to the user unless explicitly requested\.|Please relay the command output to the user in a helpful way\.|Please relay this reminder to the user in a helpful and friendly way\.|Current time:)/i;
+
+/** Internal assistant control replies that should never render as chat bubbles. */
+const INTERNAL_CONTROL_REPLY_RE = /^(?:NO_REPLY|HEARTBEAT_OK)$/;
+
+function isInternalWakeBundle(text: string): boolean {
+  let sawSystemEvent = false;
+
+  for (const rawLine of text.split('\n')) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (SYSTEM_EVENT_LINE.test(line)) {
+      sawSystemEvent = true;
+      continue;
+    }
+    if (SYSTEM_EVENT_FOLLOWUP_LINE.test(line)) continue;
+    return false;
+  }
+
+  return sawSystemEvent;
+}
+
 /** Check if text matches a system notification and extract label. */
 export function detectSystemNotification(text: string): { match: boolean; label: string } {
   // Extract task/job name from quotes if present
@@ -84,6 +181,15 @@ export function detectSystemNotification(text: string): { match: boolean; label:
 /** Determine whether a history message should be shown in the chat UI. */
 export function filterMessage(m: ChatMessage): boolean {
   const text = extractText(m);
+  const trimmedText = text.trim();
+
+  if (m.role === 'assistant' && INTERNAL_CONTROL_REPLY_RE.test(trimmedText)) {
+    return false;
+  }
+
+  if (m.role === 'user' && isInternalWakeBundle(trimmedText)) {
+    return false;
+  }
 
   // System notifications are now rendered as collapsible strips, not hidden.
   // They pass through the filter and get tagged during message processing.
@@ -91,7 +197,6 @@ export function filterMessage(m: ChatMessage): boolean {
   // Hide redundant tool results for Edit/Write operations
   // (diff view already shows the changes — only hide exact success patterns)
   if (m.role === 'tool' || m.role === 'toolResult') {
-    const trimmedText = text.trim();
     if (/^Successfully replaced text in .+\.$/.test(trimmedText)) return false;
     if (/^Successfully wrote \d+ bytes to .+\.$/.test(trimmedText)) return false;
   }
@@ -112,9 +217,6 @@ export function filterMessage(m: ChatMessage): boolean {
  */
 // ─── System event splitting ────────────────────────────────────────────────────
 
-/** Matches "System: [2026-02-17 20:30:23 GMT+1] ..." lines injected by the gateway. */
-const SYSTEM_EVENT_LINE = /^System: \[\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2})? [^\]]*\]/;
-
 /** Strip the TTS system prompt hint appended to voice messages by sendMessage. */
 const TTS_SYSTEM_HINT_RE = /\s*\[system: User sent a voice message\.[\s\S]*$/;
 
@@ -130,6 +232,31 @@ const WEBCHAT_ENVELOPE_RE = /Conversation info \(untrusted metadata\):[\s\S]*?"s
 // eslint-disable-next-line no-control-regex
 const stripAnsi = (s: string) => s.replace(/\x1b\[\d*(?:;\d+)*m/g, '');
 
+const UPLOAD_MANIFEST_RE = /\s*<nerve-upload-manifest>([\s\S]*?)<\/nerve-upload-manifest>\s*$/;
+
+function extractUploadAttachments(rawText: string): {
+  cleanedText: string;
+  uploadAttachments?: UploadAttachmentDescriptor[];
+} {
+  const match = rawText.match(UPLOAD_MANIFEST_RE);
+  if (!match) return { cleanedText: rawText };
+
+  const cleanedText = rawText.replace(UPLOAD_MANIFEST_RE, '').trimEnd();
+
+  try {
+    const parsed = JSON.parse(match[1]) as { attachments?: UploadAttachmentDescriptor[] };
+    if (!Array.isArray(parsed.attachments) || parsed.attachments.length === 0) {
+      return { cleanedText };
+    }
+    return {
+      cleanedText,
+      uploadAttachments: parsed.attachments,
+    };
+  } catch {
+    return { cleanedText: rawText };
+  }
+}
+
 /**
  * Split system event lines out of a user message text.
  * Consecutive non-system lines are joined back into a single user segment.
@@ -137,6 +264,7 @@ const stripAnsi = (s: string) => s.replace(/\x1b\[\d*(?:;\d+)*m/g, '');
 function splitSystemEvents(text: string): Array<{ role: 'event' | 'user'; text: string }> {
   const segments: Array<{ role: 'event' | 'user'; text: string }> = [];
   let userBuffer: string[] = [];
+  let sawSystemEvent = false;
 
   const flushUser = () => {
     const joined = userBuffer.join('\n').trim();
@@ -148,7 +276,15 @@ function splitSystemEvents(text: string): Array<{ role: 'event' | 'user'; text: 
     if (SYSTEM_EVENT_LINE.test(line)) {
       flushUser();
       segments.push({ role: 'event', text: stripAnsi(line) });
+      sawSystemEvent = true;
     } else {
+      const trimmed = line.trim();
+      if (sawSystemEvent) {
+        if (!trimmed || SYSTEM_EVENT_FOLLOWUP_LINE.test(trimmed)) {
+          continue;
+        }
+        sawSystemEvent = false;
+      }
       userBuffer.push(line);
     }
   }
@@ -156,9 +292,11 @@ function splitSystemEvents(text: string): Array<{ role: 'event' | 'user'; text: 
   return segments;
 }
 
-export function splitToolCallMessage(m: ChatMessage): ChatMsg[] {
+export function splitToolCallMessage(m: ChatMessage, options: { sessionKey?: string } = {}): ChatMsg[] {
   const ts = m.timestamp || m.createdAt || m.ts || null;
-  const timestamp = ts ? new Date(ts as string | number) : new Date();
+  const parsedTimestamp = ts ? new Date(ts as string | number) : null;
+  const hasPersistedTimestamp = Boolean(parsedTimestamp && Number.isFinite(parsedTimestamp.getTime()));
+  const timestamp = hasPersistedTimestamp ? parsedTimestamp as Date : new Date();
 
   // Only interleave for assistant messages with array content containing tool_use
   if (m.role === 'assistant' && Array.isArray(m.content)) {
@@ -264,6 +402,12 @@ export function splitToolCallMessage(m: ChatMessage): ChatMsg[] {
     if (!rawText.trim()) return [];
   }
 
+  const { cleanedText: uploadManifestStripped, uploadAttachments } = m.role === 'user'
+    ? extractUploadAttachments(rawText)
+    : { cleanedText: rawText, uploadAttachments: undefined };
+
+  rawText = uploadManifestStripped;
+
   // Split system events out of user messages into separate event bubbles
   if (m.role === 'user' && SYSTEM_EVENT_LINE.test(rawText)) {
     const segments = splitSystemEvents(rawText);
@@ -279,6 +423,7 @@ export function splitToolCallMessage(m: ChatMessage): ChatMsg[] {
           streaming: false,
           ...(charts.length > 0 ? { charts } : {}),
           ...(isVoice && seg.role === 'user' ? { isVoice: true } : {}),
+          ...(uploadAttachments && seg.role === 'user' ? { uploadAttachments } : {}),
         };
       });
     }
@@ -290,6 +435,11 @@ export function splitToolCallMessage(m: ChatMessage): ChatMsg[] {
   const { cleaned: text, images: extractedImages } = isAssistant
     ? extractImages(chartCleaned)
     : { cleaned: chartCleaned, images: [] };
+  const legacyExtractedImages = extractLegacyMessageImages(m, {
+    sessionKey: options.sessionKey,
+    messageTimestampMs: hasPersistedTimestamp ? timestamp.getTime() : undefined,
+  });
+  const combinedExtractedImages = dedupeExtractedImages([...extractedImages, ...legacyExtractedImages]);
 
   // Extract image content blocks (base64 images from gateway)
   const contentImages = Array.isArray(m.content) ? extractImageBlocks(m.content as ContentBlock[]) : [];
@@ -304,8 +454,9 @@ export function splitToolCallMessage(m: ChatMessage): ChatMsg[] {
     timestamp,
     streaming: false,
     ...(charts.length > 0 ? { charts } : {}),
-    ...(extractedImages.length > 0 ? { extractedImages } : {}),
+    ...(combinedExtractedImages.length > 0 ? { extractedImages: combinedExtractedImages } : {}),
     ...(contentImages.length > 0 ? { images: contentImages } : {}),
+    ...(uploadAttachments ? { uploadAttachments } : {}),
     ...(isVoice ? { isVoice: true } : {}),
     ...(sysNotif.match ? { isSystemNotification: true, systemLabel: sysNotif.label } : {}),
   }];
@@ -435,10 +586,10 @@ export function tagIntermediateMessages(msgs: ChatMsg[]): ChatMsg[] {
  *
  * filter → split → group → tag
  */
-export function processChatMessages(messages: ChatMessage[]): ChatMsg[] {
+export function processChatMessages(messages: ChatMessage[], options: { sessionKey?: string } = {}): ChatMsg[] {
   const chatMsgs: ChatMsg[] = messages
     .filter(filterMessage)
-    .flatMap(splitToolCallMessage);
+    .flatMap((message) => splitToolCallMessage(message, options));
 
   const grouped = groupToolMessages(chatMsgs);
   const tagged = tagIntermediateMessages(grouped);
@@ -467,5 +618,5 @@ export async function loadChatHistory(params: {
   const res = await rpc('chat.history', { sessionKey, limit }) as ChatHistoryResponse;
   const msgs = res?.messages || [];
 
-  return processChatMessages(msgs);
+  return processChatMessages(msgs, { sessionKey });
 }

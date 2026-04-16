@@ -13,6 +13,7 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import { config } from '../lib/config.js';
+import { getDefaultAgentWorkspaceRoot } from '../lib/openclaw-config.js';
 import { rateLimitGeneral } from '../middleware/rate-limit.js';
 
 const app = new Hono();
@@ -126,6 +127,7 @@ app.get('/api/server-info', rateLimitGeneral, async (c) => {
     gatewayStartedAt: await getGatewayStartedAt(),
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     agentName: config.agentName,
+    defaultAgentWorkspaceRoot: getDefaultAgentWorkspaceRoot(),
   });
 });
 

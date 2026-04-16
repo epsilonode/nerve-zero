@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import { SessionProvider, useSessionContext } from './SessionContext';
 import { getSessionKey, type GatewayEvent } from '@/types';
+import { getSessionDisplayLabel } from '@/features/sessions/sessionKeys';
 
 const mockUseGateway = vi.fn();
 const mockUseSettings = vi.fn();
@@ -41,6 +42,28 @@ function SessionLabels() {
         <div key={getSessionKey(session)}>{session.label || session.displayName || getSessionKey(session)}</div>
       ))}
     </div>
+  );
+}
+
+function SessionDisplayLabels() {
+  const { sessions, agentName } = useSessionContext();
+
+  return (
+    <div>
+      {sessions.map((session) => (
+        <div key={getSessionKey(session)}>{getSessionDisplayLabel(session, agentName)}</div>
+      ))}
+    </div>
+  );
+}
+
+function SessionRefreshProbe() {
+  const { refreshSessions } = useSessionContext();
+
+  return (
+    <button data-testid="refresh-sessions" onClick={() => void refreshSessions()}>
+      Refresh sessions
+    </button>
   );
 }
 
@@ -138,6 +161,212 @@ describe('SessionContext', () => {
     });
   });
 
+  it('subagent spawn calls /api/sessions/spawn-subagent, refreshes sessions, and switches to the returned child', async () => {
+    let sessionsListCalls = 0;
+    rpcMock.mockImplementation(async (method: string) => {
+      if (method === 'sessions.list') {
+        sessionsListCalls += 1;
+        return sessionsListCalls >= 2
+          ? {
+              sessions: [
+                { sessionKey: 'agent:reviewer:main', label: 'Reviewer' },
+                { sessionKey: 'agent:reviewer:subagent:new-child-uuid', label: 'Reviewer child' },
+              ],
+            }
+          : {
+              sessions: [
+                { sessionKey: 'agent:reviewer:main', label: 'Reviewer' },
+              ],
+            };
+      }
+      return {};
+    });
+
+    const spawnedChildKey = 'agent:reviewer:subagent:new-child-uuid';
+    const fetchSpy = vi.fn((input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+
+      if (url.includes('/api/sessions/spawn-subagent')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ ok: true, sessionKey: spawnedChildKey, mode: 'direct' }),
+        } as Response);
+      }
+      if (url.includes('/api/server-info')) return Promise.resolve(jsonResponse({ agentName: 'Jen' }));
+      if (url.includes('/api/agentlog')) return Promise.resolve(jsonResponse([]));
+      if (url.includes('/api/sessions/hidden')) return Promise.resolve(jsonResponse({ ok: true, sessions: [] }));
+      return Promise.resolve(jsonResponse({}));
+    }) as typeof fetch;
+    globalThis.fetch = fetchSpy;
+
+    function SpawnSubagent() {
+      const { spawnSession, currentSession } = useSessionContext();
+      return (
+        <div>
+          <div data-testid="current-session">{currentSession}</div>
+          <button
+            data-testid="spawn-subagent"
+            onClick={() => spawnSession({
+              kind: 'subagent',
+              task: 'do something',
+              label: 'my-task',
+              cleanup: 'keep',
+              parentSessionKey: 'agent:reviewer:main',
+            })}
+          />
+        </div>
+      );
+    }
+
+    render(<SessionProvider><SpawnSubagent /></SessionProvider>);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('current-session').textContent).toBe('agent:reviewer:main');
+    });
+
+    await act(async () => {
+      screen.getByTestId('spawn-subagent').click();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('current-session').textContent).toBe(spawnedChildKey);
+    });
+
+    const spawnCall = fetchSpy.mock.calls.find(([input]) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      return url.includes('/api/sessions/spawn-subagent');
+    });
+    expect(spawnCall).toBeDefined();
+    expect(spawnCall?.[1]).toMatchObject({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect(JSON.parse(String((spawnCall?.[1] as RequestInit).body))).toEqual({
+      parentSessionKey: 'agent:reviewer:main',
+      task: 'do something',
+      label: 'my-task',
+      cleanup: 'keep',
+    });
+    expect(sessionsListCalls).toBeGreaterThanOrEqual(2);
+  });
+
+  it('surfaces route error when subagent spawn fails', async () => {
+    rpcMock.mockImplementation(async (method: string) => {
+      if (method === 'sessions.list') {
+        return { sessions: [{ sessionKey: 'agent:reviewer:main', label: 'Reviewer' }] };
+      }
+      return {};
+    });
+
+    globalThis.fetch = vi.fn((input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+
+      if (url.includes('/api/sessions/spawn-subagent')) {
+        return Promise.resolve({
+          ok: false,
+          json: async () => ({ ok: false, error: 'Gateway connection failed' }),
+        } as Response);
+      }
+      if (url.includes('/api/server-info')) return Promise.resolve(jsonResponse({ agentName: 'Jen' }));
+      if (url.includes('/api/agentlog')) return Promise.resolve(jsonResponse([]));
+      if (url.includes('/api/sessions/hidden')) return Promise.resolve(jsonResponse({ ok: true, sessions: [] }));
+      return Promise.resolve(jsonResponse({}));
+    }) as typeof fetch;
+
+    let caughtError: Error | null = null;
+
+    function SpawnSubagentError() {
+      const { spawnSession } = useSessionContext();
+      return (
+        <button
+          data-testid="spawn-error"
+          onClick={async () => {
+            try {
+              await spawnSession({
+                kind: 'subagent',
+                task: 'do something',
+                parentSessionKey: 'agent:reviewer:main',
+              });
+            } catch (err) {
+              caughtError = err as Error;
+            }
+          }}
+        />
+      );
+    }
+
+    render(<SessionProvider><SpawnSubagentError /></SessionProvider>);
+    await waitFor(() => expect(rpcMock).toHaveBeenCalled());
+
+    await act(async () => {
+      screen.getByTestId('spawn-error').click();
+    });
+
+    await waitFor(() => {
+      expect(caughtError).not.toBeNull();
+    });
+
+    expect(caughtError!.message).toContain('Gateway connection failed');
+  });
+
+  it('root spawn still uses agents.create + chat.send and does not call spawn-subagent route', async () => {
+    rpcMock.mockImplementation(async (method: string) => {
+      if (method === 'sessions.list') {
+        return { sessions: [{ sessionKey: 'agent:main:main', label: 'Main' }] };
+      }
+      return {};
+    });
+
+    const fetchSpy = vi.fn((input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+      if (url.includes('/api/server-info')) return Promise.resolve(jsonResponse({ agentName: 'Jen' }));
+      if (url.includes('/api/agentlog')) return Promise.resolve(jsonResponse([]));
+      if (url.includes('/api/sessions/hidden')) return Promise.resolve(jsonResponse({ ok: true, sessions: [] }));
+      return Promise.resolve(jsonResponse({}));
+    }) as typeof fetch;
+    globalThis.fetch = fetchSpy;
+
+    function SpawnRoot() {
+      const { spawnSession } = useSessionContext();
+      return (
+        <button
+          data-testid="spawn-root"
+          onClick={() => spawnSession({ kind: 'root', agentName: 'NewAgent', task: 'hi' })}
+        />
+      );
+    }
+
+    render(<SessionProvider><SpawnRoot /></SessionProvider>);
+    await waitFor(() => expect(rpcMock).toHaveBeenCalled());
+
+    await act(async () => {
+      screen.getByTestId('spawn-root').click();
+    });
+
+    await waitFor(() => {
+      expect(rpcMock).toHaveBeenCalledWith('agents.create', expect.objectContaining({ name: 'NewAgent' }));
+      expect(rpcMock).toHaveBeenCalledWith('chat.send', expect.objectContaining({ message: 'hi' }));
+    });
+
+    const spawnRouteCalled = fetchSpy.mock.calls.some(([input]) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      return url.includes('/api/sessions/spawn-subagent');
+    });
+    expect(spawnRouteCalled).toBe(false);
+  });
+
   it('uses a unique config name when spawning a duplicate root agent', async () => {
     rpcMock.mockImplementation(async (method: string) => {
       if (method === 'sessions.list') {
@@ -173,6 +402,43 @@ describe('SessionContext', () => {
     });
   });
 
+  it('uses the server-provided default workspace root when spawning a root agent', async () => {
+    globalThis.fetch = vi.fn((input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+
+      if (url.includes('/api/server-info')) {
+        return Promise.resolve(jsonResponse({
+          agentName: 'Jen',
+          defaultAgentWorkspaceRoot: '/managed/workspaces',
+        }));
+      }
+      if (url.includes('/api/agentlog')) return Promise.resolve(jsonResponse([]));
+      if (url.includes('/api/sessions/hidden')) return Promise.resolve(jsonResponse({ ok: true, sessions: [] }));
+      return Promise.resolve(jsonResponse({}));
+    }) as typeof fetch;
+
+    function Spawn() {
+      const { spawnSession } = useSessionContext();
+      return <button data-testid="spawn-managed" onClick={() => spawnSession({
+        kind: 'root', agentName: 'Managed', task: 'hi', model: 'anthropic/claude-sonnet-4-5',
+      })} />;
+    }
+
+    render(<SessionProvider><Spawn /></SessionProvider>);
+    await waitFor(() => expect(rpcMock).toHaveBeenCalledWith('sessions.list', { limit: 1000 }));
+    screen.getByTestId('spawn-managed').click();
+    await waitFor(() => {
+      expect(rpcMock).toHaveBeenCalledWith('agents.create', expect.objectContaining({
+        name: 'Managed',
+        workspace: '/managed/workspaces/managed',
+      }));
+    });
+  });
+
   it('uses the full gateway session list for sidebar refreshes so older agent chats stay visible', async () => {
     render(
       <SessionProvider>
@@ -186,6 +452,163 @@ describe('SessionContext', () => {
 
     expect(rpcMock).toHaveBeenCalledWith('sessions.list', { limit: 1000 });
     expect(rpcMock).not.toHaveBeenCalledWith('sessions.list', expect.objectContaining({ activeMinutes: expect.any(Number) }));
+  });
+
+  it('hydrates root session labels from IDENTITY.md names', async () => {
+    rpcMock.mockImplementation(async (method: string) => {
+      if (method === 'sessions.list') {
+        return {
+          sessions: [
+            { sessionKey: 'agent:main:main', label: 'Main' },
+            { sessionKey: 'agent:reviewer:main', displayName: 'stale reviewer label' },
+          ],
+        };
+      }
+      return {};
+    });
+
+    globalThis.fetch = vi.fn((input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+
+      if (url.includes('/api/server-info')) return Promise.resolve(jsonResponse({ agentName: 'Jen' }));
+      if (url.includes('/api/workspace/identity?agentId=reviewer')) {
+        return Promise.resolve(jsonResponse({ ok: true, content: '# IDENTITY.md\n- Name: Reviewer Prime\n- Role: Review agent\n' }));
+      }
+      if (url.includes('/api/agentlog')) return Promise.resolve(jsonResponse([]));
+      if (url.includes('/api/sessions/hidden')) return Promise.resolve(jsonResponse({ ok: true, sessions: [] }));
+      return Promise.resolve(jsonResponse({}));
+    }) as typeof fetch;
+
+    render(
+      <SessionProvider>
+        <SessionDisplayLabels />
+      </SessionProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Jen (main)')).toBeInTheDocument();
+      expect(screen.getByText('Reviewer Prime (reviewer)')).toBeInTheDocument();
+    });
+  });
+
+
+  it('clears stale identity labels when a non-main root has no parseable identity name', async () => {
+    rpcMock.mockImplementation(async (method: string) => {
+      if (method === 'sessions.list') {
+        return {
+          sessions: [
+            { sessionKey: 'agent:main:main', label: 'Main' },
+            { sessionKey: 'agent:reviewer:main', identityName: 'Reviewer Prime' },
+          ],
+        };
+      }
+      return {};
+    });
+
+    globalThis.fetch = vi.fn((input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+
+      if (url.includes('/api/server-info')) return Promise.resolve(jsonResponse({ agentName: 'Jen' }));
+      if (url.includes('/api/workspace/identity?agentId=reviewer')) {
+        return Promise.resolve(jsonResponse({ ok: true, content: '# IDENTITY.md\n- Role: Review agent\n' }));
+      }
+      if (url.includes('/api/agentlog')) return Promise.resolve(jsonResponse([]));
+      if (url.includes('/api/sessions/hidden')) return Promise.resolve(jsonResponse({ ok: true, sessions: [] }));
+      return Promise.resolve(jsonResponse({}));
+    }) as typeof fetch;
+
+    render(
+      <SessionProvider>
+        <SessionDisplayLabels />
+      </SessionProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Jen (main)')).toBeInTheDocument();
+      expect(screen.getByText('reviewer')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText('Reviewer Prime (reviewer)')).not.toBeInTheDocument();
+  });
+
+  it('does not refetch identity content for roots whose identity files have no parseable name', async () => {
+    rpcMock.mockImplementation(async (method: string) => {
+      if (method === 'sessions.list') {
+        return {
+          sessions: [
+            { sessionKey: 'agent:main:main', label: 'Main' },
+            { sessionKey: 'agent:reviewer:main', displayName: 'stale reviewer label' },
+          ],
+        };
+      }
+      return {};
+    });
+
+    const fetchSpy = vi.fn((input: string | URL | Request) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+
+      if (url.includes('/api/server-info')) return Promise.resolve(jsonResponse({ agentName: 'Jen' }));
+      if (url.includes('/api/workspace/identity?agentId=reviewer')) {
+        return Promise.resolve(jsonResponse({ ok: true, content: '# IDENTITY.md\n- Role: Review agent\n' }));
+      }
+      if (url.includes('/api/agentlog')) return Promise.resolve(jsonResponse([]));
+      if (url.includes('/api/sessions/hidden')) return Promise.resolve(jsonResponse({ ok: true, sessions: [] }));
+      return Promise.resolve(jsonResponse({}));
+    }) as typeof fetch;
+    globalThis.fetch = fetchSpy;
+
+    const { getByTestId } = render(
+      <SessionProvider>
+        <SessionRefreshProbe />
+      </SessionProvider>,
+    );
+
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledWith(
+        '/api/workspace/identity?agentId=reviewer',
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    });
+
+    const identityCallsBeforeRefresh = fetchSpy.mock.calls.filter(([input]) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+      return url.includes('/api/workspace/identity?agentId=reviewer');
+    }).length;
+    expect(identityCallsBeforeRefresh).toBe(1);
+
+    await act(async () => {
+      getByTestId('refresh-sessions').click();
+    });
+
+    await waitFor(() => {
+      expect(rpcMock).toHaveBeenCalledWith('sessions.list', { limit: 1000 });
+    });
+
+    const identityCallsAfterRefresh = fetchSpy.mock.calls.filter(([input]) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+      return url.includes('/api/workspace/identity?agentId=reviewer');
+    }).length;
+    expect(identityCallsAfterRefresh).toBe(1);
   });
 
   it('marks background top-level roots unread on start and pings when chat reaches a terminal event', async () => {

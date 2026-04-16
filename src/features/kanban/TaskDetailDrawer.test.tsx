@@ -52,8 +52,8 @@ describe('TaskDetailDrawer', () => {
     });
     mockUseSessionContext.mockReturnValue({
       sessions: [
-        { sessionKey: 'agent:designer:main', label: 'Designer' },
-        { sessionKey: 'agent:reviewer:main', label: 'Reviewer' },
+        { sessionKey: 'agent:designer:main', identityName: 'Designer' },
+        { sessionKey: 'agent:reviewer:main', identityName: 'Reviewer' },
       ],
       agentName: 'Kim',
     });
@@ -62,7 +62,7 @@ describe('TaskDetailDrawer', () => {
   it('shows the friendly current assignee label when the task assignee is active', () => {
     renderDrawer(makeTask({ assignee: 'agent:designer' }));
 
-    expect(screen.getByRole('combobox', { name: 'Assignee' })).toHaveValue('Designer');
+    expect(screen.getByRole('combobox', { name: 'Assignee' })).toHaveValue('Designer (designer)');
   });
 
   it('does not render the assignee combobox inside an extra input-styled shell', () => {
@@ -102,7 +102,7 @@ describe('TaskDetailDrawer', () => {
     renderDrawer(makeTask({ assignee: 'agent:ghost-reviewer' }), onUpdate);
 
     await user.click(screen.getByRole('combobox', { name: 'Assignee' }));
-    await user.click(await screen.findByRole('option', { name: 'Reviewer' }));
+    await user.click(await screen.findByRole('option', { name: 'Reviewer (reviewer)' }));
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => {

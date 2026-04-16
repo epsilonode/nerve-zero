@@ -9,12 +9,16 @@ describe('file-browser routes', () => {
   let homeDir: string;
   let tmpDir: string;
   let researchWorkspace: string;
+  let remoteHomeDir: string;
+  let remoteWorkspace: string;
 
   beforeEach(async () => {
     vi.resetModules();
     homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'fbrowser-test-'));
     tmpDir = path.join(homeDir, '.openclaw', 'workspace');
     researchWorkspace = path.join(homeDir, '.openclaw', 'workspace-research');
+    remoteHomeDir = path.join(homeDir, 'remote-nonexistent');
+    remoteWorkspace = path.join(remoteHomeDir, '.openclaw', 'workspace');
     await fs.mkdir(tmpDir, { recursive: true });
     // Create a MEMORY.md in the tmpDir so getWorkspaceRoot returns tmpDir
     await fs.writeFile(path.join(tmpDir, 'MEMORY.md'), '# Memories\n');
@@ -25,21 +29,43 @@ describe('file-browser routes', () => {
     await fs.rm(homeDir, { recursive: true, force: true });
   });
 
-  async function buildApp(opts?: { fileBrowserRoot?: string }) {
+  async function buildApp(opts?: {
+    fileBrowserRoot?: string;
+    remote?: boolean;
+    gatewayFilesListResult?: Array<{ name: string; missing?: boolean; size?: number; updatedAtMs?: number }>;
+  }) {
     vi.resetModules();
+    vi.doUnmock('../lib/gateway-rpc.js');
+
+    const useRemote = opts?.remote ?? false;
+    const configuredHomeDir = useRemote ? remoteHomeDir : homeDir;
+    const configuredWorkspace = useRemote ? remoteWorkspace : tmpDir;
+
     vi.doMock('../lib/config.js', () => ({
       config: {
         auth: false,
         port: 3000,
         host: '127.0.0.1',
         sslPort: 3443,
-        home: homeDir,
-        memoryPath: path.join(tmpDir, 'MEMORY.md'),
-        memoryDir: path.join(tmpDir, 'memory'),
+        home: configuredHomeDir,
+        memoryPath: path.join(configuredWorkspace, 'MEMORY.md'),
+        memoryDir: path.join(configuredWorkspace, 'memory'),
         fileBrowserRoot: opts?.fileBrowserRoot ?? '',
+        workspaceRemote: false,
       },
       SESSION_COOKIE_NAME: 'nerve_session_3000',
     }));
+
+    if (useRemote) {
+      vi.doMock('../lib/gateway-rpc.js', () => ({
+        gatewayFilesList: vi.fn().mockResolvedValue(opts?.gatewayFilesListResult ?? []),
+        gatewayFilesGet: vi.fn(),
+        gatewayFilesSet: vi.fn(),
+      }));
+
+      const detectMod = await import('../lib/workspace-detect.js');
+      detectMod.clearWorkspaceDetectCache();
+    }
 
     const mod = await import('./file-browser.js');
     const app = new Hono();
@@ -89,6 +115,56 @@ describe('file-browser routes', () => {
       expect(names).not.toContain('node_modules');
       expect(names).not.toContain('.git');
     });
+
+    it('hides hidden workspace entries by default', async () => {
+      await fs.writeFile(path.join(tmpDir, '.hidden.md'), 'secret');
+      await fs.writeFile(path.join(tmpDir, 'visible.md'), 'hello');
+
+      const app = await buildApp();
+      const res = await app.request('/api/files/tree');
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as { ok: boolean; entries: Array<{ name: string }> };
+      const names = json.entries.map(e => e.name);
+
+      expect(names).toContain('visible.md');
+      expect(names).not.toContain('.hidden.md');
+    });
+
+    it('includes hidden workspace entries when showHidden=true', async () => {
+      await fs.writeFile(path.join(tmpDir, '.hidden.md'), 'secret');
+      await fs.mkdir(path.join(tmpDir, '.plans'));
+
+      const app = await buildApp();
+      const res = await app.request('/api/files/tree?showHidden=true');
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as { ok: boolean; entries: Array<{ name: string }> };
+      const names = json.entries.map(e => e.name);
+
+      expect(names).toContain('.hidden.md');
+      expect(names).toContain('.plans');
+    });
+
+    it('includes hidden workspace entries when showHidden=true via remote gateway fallback', async () => {
+      const app = await buildApp({
+        remote: true,
+        gatewayFilesListResult: [
+          { name: '.hidden.md', missing: false, size: 6, updatedAtMs: 1000 },
+          { name: '.plans', missing: false, size: 0, updatedAtMs: 1001 },
+          { name: 'visible.md', missing: false, size: 5, updatedAtMs: 1002 },
+        ],
+      });
+
+      const res = await app.request('/api/files/tree?showHidden=true');
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as { ok: boolean; entries: Array<{ name: string }>; remoteWorkspace?: boolean };
+      const names = json.entries.map((e) => e.name);
+
+      expect(json.ok).toBe(true);
+      expect(json.remoteWorkspace).toBe(true);
+      expect(names).toContain('.hidden.md');
+      expect(names).toContain('.plans');
+      expect(names).toContain('visible.md');
+    });
   });
 
   describe('GET /api/files/resolve', () => {
@@ -112,15 +188,77 @@ describe('file-browser routes', () => {
       expect(json).toEqual({ ok: true, path: 'docs', type: 'directory', binary: false });
     });
 
+    it('resolves current-document-relative file links safely within the workspace', async () => {
+      await fs.mkdir(path.join(tmpDir, 'docs', 'guide'), { recursive: true });
+      await fs.writeFile(path.join(tmpDir, 'docs', 'guide', 'advanced.md'), '# Advanced');
+      const app = await buildApp();
+
+      const res = await app.request('/api/files/resolve?path=advanced.md&relativeTo=docs/guide/index.md');
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as { ok: boolean; path: string; type: string; binary: boolean };
+      expect(json).toEqual({ ok: true, path: 'docs/guide/advanced.md', type: 'file', binary: false });
+    });
+
+    it('supports workspace-root links from markdown docs via a leading slash', async () => {
+      await fs.mkdir(path.join(tmpDir, 'docs'), { recursive: true });
+      await fs.writeFile(path.join(tmpDir, 'docs', 'todo.md'), '# Todo');
+      const app = await buildApp();
+
+      const res = await app.request('/api/files/resolve?path=/docs/todo.md&relativeTo=notes/index.md');
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as { ok: boolean; path: string; type: string; binary: boolean };
+      expect(json).toEqual({ ok: true, path: 'docs/todo.md', type: 'file', binary: false });
+    });
+
+    it('resolves workspace-root-document relative links even when relativeTo is slash-prefixed', async () => {
+      await fs.mkdir(path.join(tmpDir, 'projects', 'demo'), { recursive: true });
+      await fs.writeFile(path.join(tmpDir, 'projects', 'demo', 'notes.md'), '# Notes');
+      const app = await buildApp();
+
+      const res = await app.request('/api/files/resolve?path=./projects/demo/notes.md&relativeTo=/README.md');
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as { ok: boolean; path: string; type: string; binary: boolean };
+      expect(json).toEqual({ ok: true, path: 'projects/demo/notes.md', type: 'file', binary: false });
+    });
+
     it('returns 404 for safe missing targets inside the workspace root', async () => {
       const app = await buildApp();
       const res = await app.request('/api/files/resolve?path=missing-note.md');
       expect(res.status).toBe(404);
     });
 
+    it('accepts /workspace-prefixed paths by normalizing to workspace-relative', async () => {
+      await fs.mkdir(path.join(tmpDir, 'src'));
+      await fs.writeFile(path.join(tmpDir, 'src', 'main.ts'), 'export {};');
+      const app = await buildApp();
+
+      const res = await app.request('/api/files/resolve?path=%2Fworkspace%2Fsrc%2Fmain.ts');
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as { ok: boolean; path: string; type: string; binary: boolean };
+      expect(json).toEqual({ ok: true, path: 'src/main.ts', type: 'file', binary: false });
+    });
+
+    it('keeps /workspace-prefixed links rooted even when relativeTo is provided', async () => {
+      await fs.mkdir(path.join(tmpDir, 'src'));
+      await fs.mkdir(path.join(tmpDir, 'notes'));
+      await fs.writeFile(path.join(tmpDir, 'src', 'main.ts'), 'export {};');
+      const app = await buildApp();
+
+      const res = await app.request('/api/files/resolve?path=%2Fworkspace%2Fsrc%2Fmain.ts&relativeTo=notes/index.md');
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as { ok: boolean; path: string; type: string; binary: boolean };
+      expect(json).toEqual({ ok: true, path: 'src/main.ts', type: 'file', binary: false });
+    });
+
     it('returns 403 for invalid or excluded targets', async () => {
       const app = await buildApp();
       const res = await app.request('/api/files/resolve?path=../../etc');
+      expect(res.status).toBe(403);
+    });
+
+    it('returns 403 when a current-document-relative link escapes the workspace', async () => {
+      const app = await buildApp();
+      const res = await app.request('/api/files/resolve?path=../../../etc/passwd&relativeTo=docs/guide/index.md');
       expect(res.status).toBe(403);
     });
   });

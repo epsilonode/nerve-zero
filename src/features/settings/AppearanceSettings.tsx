@@ -1,4 +1,4 @@
-import { Monitor, Eye, Type, Activity, ALargeSmall, Code2 } from 'lucide-react';
+import { Monitor, Eye, Type, Activity, ALargeSmall, Code2, Columns3 } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { InlineSelect } from '@/components/ui/InlineSelect';
 import { useSettings } from '@/contexts/SettingsContext';
@@ -42,7 +42,24 @@ const FONT_SIZE_OPTIONS = [
 
 /** Settings section for theme, font, font size, and panel visibility. */
 export function AppearanceSettings() {
-  const { eventsVisible, toggleEvents, logVisible, toggleLog, theme, setTheme, font, setFont, fontSize, setFontSize, editorFontSize, setEditorFontSize } = useSettings();
+  const {
+    eventsVisible,
+    toggleEvents,
+    logVisible,
+    toggleLog,
+    showHiddenWorkspaceEntries,
+    toggleShowHiddenWorkspaceEntries,
+    kanbanVisible,
+    toggleKanbanVisible,
+    theme,
+    setTheme,
+    font,
+    setFont,
+    fontSize,
+    setFontSize,
+    editorFontSize,
+    setEditorFontSize,
+  } = useSettings();
 
   const handleThemeChange = (next: string) => {
     setTheme(next as ThemeName);
@@ -174,6 +191,38 @@ export function AppearanceSettings() {
           checked={logVisible}
           onCheckedChange={toggleLog}
           aria-label="Toggle log panel visibility"
+        />
+      </div>
+
+      {/* Hidden workspace entries visibility */}
+      <div className="cockpit-row items-start justify-between">
+        <div className="flex items-center gap-3">
+          <Eye size={14} className={showHiddenWorkspaceEntries ? 'text-primary' : 'text-muted-foreground'} aria-hidden="true" />
+          <div className="flex flex-col">
+            <span className="text-sm font-medium text-foreground" id="hidden-workspace-entries-label">Show hidden workspace entries</span>
+            <span className="text-xs text-muted-foreground">Reveal dotfiles and dotfolders in the workspace browser when you need them.</span>
+          </div>
+        </div>
+        <Switch
+          checked={showHiddenWorkspaceEntries}
+          onCheckedChange={toggleShowHiddenWorkspaceEntries}
+          aria-label="Toggle hidden workspace entries visibility"
+        />
+      </div>
+
+      {/* Workspace Kanban Visibility */}
+      <div className="cockpit-row items-start justify-between">
+        <div className="flex items-center gap-3">
+          <Columns3 size={14} className={kanbanVisible ? 'text-primary' : 'text-muted-foreground'} aria-hidden="true" />
+          <div className="flex flex-col">
+            <span className="text-sm font-medium text-foreground" id="kanban-label">Show workspace tasks</span>
+            <span className="text-xs text-muted-foreground">Toggle the Kanban view inside the workspace tabs.</span>
+          </div>
+        </div>
+        <Switch
+          checked={kanbanVisible}
+          onCheckedChange={toggleKanbanVisible}
+          aria-label="Toggle workspace kanban visibility"
         />
       </div>
 

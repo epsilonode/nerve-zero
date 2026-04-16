@@ -15,6 +15,7 @@ export interface Session {
   key?: string;
   id?: string;
   label?: string;
+  identityName?: string;
   state?: string;
   agentState?: string;
   busy?: boolean;
@@ -122,6 +123,12 @@ export interface ChatMessage {
   timestamp?: string | number;
   createdAt?: string | number;
   ts?: string | number;
+  MediaPath?: string;
+  MediaPaths?: string[];
+  MediaType?: string;
+  MediaTypes?: string[];
+  MediaUrl?: string;
+  MediaUrls?: string[];
 }
 
 /** A content block within a multi-part message (text, tool call, image, etc.). */
@@ -137,6 +144,8 @@ export interface ContentBlock {
   /** Image content block fields (from gateway) */
   data?: string;       // base64 image data
   mimeType?: string;   // e.g. "image/jpeg"
+  omitted?: boolean;
+  bytes?: number;
   /** Anthropic-style image source */
   source?: { type?: string; media_type?: string; data?: string };
 }

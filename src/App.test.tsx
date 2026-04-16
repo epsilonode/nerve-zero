@@ -1,10 +1,12 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import type { ReactNode } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { forwardRef, useImperativeHandle, type ReactNode } from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App';
 
 type SaveResult = { ok: boolean; conflict?: boolean };
 type SaveAllResult = { ok: boolean; failedPath?: string; conflict?: boolean };
+
+const originalFetch = global.fetch;
 
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
@@ -17,15 +19,26 @@ function createDeferred<T>() {
 }
 
 const {
+  settingsContext,
+  uploadConfigState,
   sessionContext,
   saveFileByAgent,
   saveAllDirtyFilesByAgent,
   discardAllDirtyFilesByAgent,
   dirtyStateByAgent,
   reloadCalls,
+  topBarRenderSnapshots,
   tabRenderSnapshots,
+  addWorkspacePathSpy,
   useOpenFilesMock,
 } = vi.hoisted(() => {
+  const settingsContext = {
+    kanbanVisible: true,
+  };
+  const uploadConfigState = {
+    fileReferenceEnabled: true,
+  };
+
   const sessionContext = {
     sessions: [
       { key: 'agent:alpha:main', label: 'Alpha' },
@@ -65,11 +78,13 @@ const {
     bravo: false,
   };
   const reloadCalls: Array<{ agentId: string; path: string }> = [];
+  const topBarRenderSnapshots: Array<{ showKanbanView?: boolean; viewMode?: string }> = [];
   const tabRenderSnapshots: Array<{
     workspaceAgentId: string;
     hasSaveToast: boolean;
     saveToastPath: string | null;
   }> = [];
+  const addWorkspacePathSpy = vi.fn();
 
   const useOpenFilesMock = vi.fn((agentId: string) => ({
     openFiles: [{ path: 'shared.md', name: 'shared.md', content: 'draft', savedContent: 'draft', dirty: dirtyStateByAgent[agentId] ?? false }],
@@ -92,13 +107,17 @@ const {
   }));
 
   return {
+    settingsContext,
+    uploadConfigState,
     sessionContext,
     saveFileByAgent,
     saveAllDirtyFilesByAgent,
     discardAllDirtyFilesByAgent,
     dirtyStateByAgent,
     reloadCalls,
+    topBarRenderSnapshots,
     tabRenderSnapshots,
+    addWorkspacePathSpy,
     useOpenFilesMock,
   };
 });
@@ -165,6 +184,7 @@ vi.mock('@/contexts/SettingsContext', () => ({
     toggleTelemetry: vi.fn(),
     setTheme: vi.fn(),
     setFont: vi.fn(),
+    kanbanVisible: settingsContext.kanbanVisible,
   }),
 }));
 
@@ -213,12 +233,22 @@ vi.mock('@/features/command-palette/commands', () => ({
 
 vi.mock('@/features/file-browser', () => ({
   useOpenFiles: useOpenFilesMock,
-  FileTreePanel: () => <div data-testid="file-tree-panel" />,
-  TabbedContentArea: ({ workspaceAgentId, onSaveFile, onReloadFile, saveToast }: {
+  FileTreePanel: ({ onAddToChat, addToChatEnabled }: {
+    onAddToChat?: (path: string, kind: 'file' | 'directory', agentId?: string) => void | Promise<void>;
+    addToChatEnabled?: boolean;
+  }) => (addToChatEnabled ? (
+    <button type="button" data-testid="file-tree-panel" onClick={() => onAddToChat?.('docs/note.md', 'file')}>
+      Trigger add to chat
+    </button>
+  ) : <div data-testid="file-tree-panel-disabled">Add to chat disabled</div>),
+  TabbedContentArea: ({ workspaceAgentId, onSaveFile, onReloadFile, saveToast, chatPanel, openBeads, onOpenBeadId }: {
     workspaceAgentId: string;
     onSaveFile: (path: string) => void;
     onReloadFile?: (path: string) => void;
     saveToast?: { path: string; type: 'conflict' } | null;
+    chatPanel?: ReactNode;
+    openBeads?: Array<{ id: string; beadId: string }>;
+    onOpenBeadId?: (target: { beadId: string }) => void;
   }) => {
     tabRenderSnapshots.push({
       workspaceAgentId,
@@ -228,8 +258,11 @@ vi.mock('@/features/file-browser', () => ({
 
     return (
       <div>
+        {chatPanel}
         <div data-testid="workspace-agent">{workspaceAgentId}</div>
         <button type="button" onClick={() => onSaveFile('shared.md')}>Save shared.md</button>
+        <button type="button" onClick={() => onOpenBeadId?.({ beadId: 'nerve-fms2' })}>Open bead viewer</button>
+        <div data-testid="open-beads">{(openBeads ?? []).map((bead) => bead.beadId).join(',')}</div>
         {saveToast && (
           <div>
             <span>File changed externally.</span>
@@ -248,7 +281,15 @@ vi.mock('@/features/connect/ConnectDialog', () => ({
 }));
 
 vi.mock('@/components/TopBar', () => ({
-  TopBar: () => null,
+  TopBar: ({ showKanbanView, viewMode }: { showKanbanView?: boolean; viewMode?: string }) => {
+    topBarRenderSnapshots.push({ showKanbanView, viewMode });
+    return (
+      <div>
+        <div data-testid="topbar-show-kanban">{String(showKanbanView ?? true)}</div>
+        <div data-testid="topbar-view-mode">{viewMode ?? 'chat'}</div>
+      </div>
+    );
+  },
 }));
 
 vi.mock('@/components/StatusBar', () => ({
@@ -260,7 +301,14 @@ vi.mock('@/components/ConfirmDialog', () => ({
 }));
 
 vi.mock('@/features/chat/ChatPanel', () => ({
-  ChatPanel: () => null,
+  ChatPanel: forwardRef((_props: { onOpenBeadId?: (target: { beadId: string; workspaceAgentId?: string }) => void }, ref) => {
+    useImperativeHandle(ref, () => ({
+      focusInput: vi.fn(),
+      addWorkspacePath: addWorkspacePathSpy,
+    }));
+
+    return null;
+  }),
 }));
 
 vi.mock('@/components/ResizablePanels', () => ({
@@ -337,6 +385,48 @@ vi.mock('@/features/kanban/KanbanPanel', () => ({
   KanbanPanel: () => null,
 }));
 
+beforeEach(() => {
+  global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+
+    if (url.includes('/api/upload-config')) {
+      return {
+        ok: true,
+        json: async () => ({
+          twoModeEnabled: false,
+          inlineEnabled: true,
+          fileReferenceEnabled: uploadConfigState.fileReferenceEnabled,
+          modeChooserEnabled: false,
+          inlineAttachmentMaxMb: 4,
+          inlineImageContextMaxBytes: 32768,
+          inlineImageAutoDowngradeToFileReference: true,
+          inlineImageShrinkMinDimension: 512,
+          inlineImageMaxDimension: 2048,
+          inlineImageWebpQuality: 82,
+          exposeInlineBase64ToAgent: false,
+        }),
+      } as Response;
+    }
+
+    if (url.includes('/api/workspace/chatPathLinks')) {
+      return {
+        ok: false,
+        status: 404,
+        json: async () => ({ ok: false }),
+      } as Response;
+    }
+
+    return {
+      ok: true,
+      json: async () => ({}),
+    } as Response;
+  }) as typeof fetch;
+});
+
+afterEach(() => {
+  global.fetch = originalFetch;
+});
+
 describe('App save toast workspace scoping', () => {
   beforeEach(() => {
     localStorage.clear();
@@ -346,9 +436,13 @@ describe('App save toast workspace scoping', () => {
     Object.values(saveFileByAgent).forEach((mockFn) => mockFn.mockReset());
     Object.values(saveAllDirtyFilesByAgent).forEach((mockFn) => mockFn.mockReset());
     Object.values(discardAllDirtyFilesByAgent).forEach((mockFn) => mockFn.mockReset());
+    addWorkspacePathSpy.mockReset();
+    uploadConfigState.fileReferenceEnabled = true;
     dirtyStateByAgent.alpha = false;
     dirtyStateByAgent.bravo = false;
+    settingsContext.kanbanVisible = true;
     reloadCalls.length = 0;
+    topBarRenderSnapshots.length = 0;
     tabRenderSnapshots.length = 0;
     useOpenFilesMock.mockClear();
 
@@ -365,6 +459,88 @@ describe('App save toast workspace scoping', () => {
         dispatchEvent: vi.fn(),
       })),
     });
+  });
+
+  it('passes the active workspace agent through add-to-chat requests from the file tree', async () => {
+    sessionContext.currentSession = 'agent:bravo:main';
+
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Trigger add to chat' }));
+
+    expect(addWorkspacePathSpy).toHaveBeenCalledWith('docs/note.md', 'file', 'bravo');
+  });
+
+  it('does not expose add-to-chat from the file tree when file references are disabled', async () => {
+    uploadConfigState.fileReferenceEnabled = false;
+
+    render(<App />);
+
+    await screen.findByTestId('file-tree-panel-disabled');
+    expect(screen.queryByRole('button', { name: 'Trigger add to chat' })).not.toBeInTheDocument();
+    expect(addWorkspacePathSpy).not.toHaveBeenCalled();
+  });
+
+  it('retries upload-config after a transient failure before hiding add-to-chat', async () => {
+    vi.useFakeTimers();
+    let uploadConfigAttempts = 0;
+
+    try {
+      global.fetch = vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+
+        if (url.includes('/api/upload-config')) {
+          uploadConfigAttempts += 1;
+          if (uploadConfigAttempts === 1) {
+            throw new Error('temporary upload-config failure');
+          }
+
+          return {
+            ok: true,
+            json: async () => ({
+              twoModeEnabled: false,
+              inlineEnabled: true,
+              fileReferenceEnabled: true,
+              modeChooserEnabled: false,
+              inlineAttachmentMaxMb: 4,
+              inlineImageContextMaxBytes: 32768,
+              inlineImageAutoDowngradeToFileReference: true,
+              inlineImageShrinkMinDimension: 512,
+              inlineImageMaxDimension: 2048,
+              inlineImageWebpQuality: 82,
+              exposeInlineBase64ToAgent: false,
+            }),
+          } as Response;
+        }
+
+        if (url.includes('/api/workspace/chatPathLinks')) {
+          return {
+            ok: false,
+            status: 404,
+            json: async () => ({ ok: false }),
+          } as Response;
+        }
+
+        return {
+          ok: true,
+          json: async () => ({}),
+        } as Response;
+      }) as typeof fetch;
+
+      render(<App />);
+
+      expect(screen.getByTestId('file-tree-panel-disabled')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Trigger add to chat' })).not.toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+
+      expect(screen.getByRole('button', { name: 'Trigger add to chat' })).toBeInTheDocument();
+      expect(uploadConfigAttempts).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('drops a late save conflict toast after switching workspaces before the save resolves', async () => {
@@ -456,10 +632,77 @@ describe('App save toast workspace scoping', () => {
   });
 });
 
+describe('App bead tab workspace scoping', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sessionContext.currentSession = 'agent:alpha:main';
+    sessionContext.setCurrentSession.mockReset();
+    dirtyStateByAgent.alpha = false;
+    dirtyStateByAgent.bravo = false;
+    tabRenderSnapshots.length = 0;
+
+    Object.defineProperty(window, 'matchMedia', {
+      writable: true,
+      value: vi.fn().mockImplementation((query: string) => ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+  });
+
+  it('shows bead tabs only for the active workspace and drops them immediately on workspace switch', () => {
+    const { rerender } = render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open bead viewer' }));
+    expect(screen.getByTestId('open-beads')).toHaveTextContent('nerve-fms2');
+
+    sessionContext.currentSession = 'agent:bravo:main';
+    rerender(<App />);
+
+    expect(screen.getByTestId('workspace-agent')).toHaveTextContent('bravo');
+    expect(screen.getByTestId('open-beads')).toHaveTextContent('');
+
+    sessionContext.currentSession = 'agent:alpha:main';
+    rerender(<App />);
+
+    expect(screen.getByTestId('workspace-agent')).toHaveTextContent('alpha');
+    expect(screen.getByTestId('open-beads')).toHaveTextContent('nerve-fms2');
+  });
+
+  it('creates distinct shorthand bead tabs per workspace instead of deduping across hidden tabs', () => {
+    const { rerender } = render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open bead viewer' }));
+    expect(screen.getByTestId('open-beads')).toHaveTextContent('nerve-fms2');
+
+    sessionContext.currentSession = 'agent:bravo:main';
+    rerender(<App />);
+    expect(screen.getByTestId('open-beads')).toHaveTextContent('');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open bead viewer' }));
+    expect(screen.getByTestId('open-beads')).toHaveTextContent('nerve-fms2');
+
+    sessionContext.currentSession = 'agent:alpha:main';
+    rerender(<App />);
+    expect(screen.getByTestId('open-beads')).toHaveTextContent('nerve-fms2');
+
+    sessionContext.currentSession = 'agent:bravo:main';
+    rerender(<App />);
+    expect(screen.getByTestId('open-beads')).toHaveTextContent('nerve-fms2');
+  });
+});
+
 describe('App workspace switch guard', () => {
   beforeEach(() => {
     localStorage.clear();
     sessionContext.currentSession = 'agent:alpha:main';
+    uploadConfigState.fileReferenceEnabled = true;
     sessionContext.setCurrentSession.mockReset();
     sessionContext.spawnSession.mockReset();
     Object.values(saveAllDirtyFilesByAgent).forEach((mockFn) => mockFn.mockReset());
@@ -577,5 +820,31 @@ describe('App workspace switch guard', () => {
         cleanup: 'keep',
       });
     });
+  });
+});
+
+describe('App kanban visibility gating', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    settingsContext.kanbanVisible = true;
+    topBarRenderSnapshots.length = 0;
+  });
+
+  it('passes the kanban visibility flag through to the top bar', () => {
+    settingsContext.kanbanVisible = false;
+
+    render(<App />);
+
+    expect(screen.getByTestId('topbar-show-kanban')).toHaveTextContent('false');
+    expect(topBarRenderSnapshots.at(-1)).toMatchObject({ showKanbanView: false });
+  });
+
+  it('falls back to chat when kanban is persisted but hidden', () => {
+    localStorage.setItem('nerve:viewMode', 'kanban');
+    settingsContext.kanbanVisible = false;
+
+    render(<App />);
+
+    expect(screen.getByTestId('topbar-view-mode')).toHaveTextContent('chat');
   });
 });

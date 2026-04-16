@@ -10,8 +10,11 @@ import { type ReactNode, lazy, Suspense } from 'react';
 import { Loader2, AlertTriangle, X } from 'lucide-react';
 import { EditorTabBar } from './EditorTabBar';
 import { ImageViewer } from './ImageViewer';
-import { isImageFile } from './utils/fileTypes';
+import { MarkdownDocumentView } from './MarkdownDocumentView';
+import { PdfViewer } from './PdfViewer';
+import { isImageFile, isMarkdownFile, isPdfFile } from './utils/fileTypes';
 import type { OpenFile } from './types';
+import { BeadViewerTab, type BeadLinkTarget, type OpenBeadTab } from '@/features/beads';
 
 // Lazy-load CodeMirror editor — keeps it out of the initial bundle
 const FileEditor = lazy(() => import('./FileEditor'));
@@ -34,13 +37,17 @@ interface SaveToast {
 interface TabbedContentAreaProps {
   activeTab: string;
   openFiles: OpenFile[];
+  openBeads?: OpenBeadTab[];
   workspaceAgentId: string;
   onSelectTab: (id: string) => void;
-  onCloseTab: (path: string) => void;
+  onCloseTab: (id: string) => void;
   onContentChange: (path: string, content: string) => void;
   onSaveFile: (path: string) => void;
   onRetryFile: (path: string) => void;
   onReloadFile?: (path: string) => void;
+  onOpenWorkspacePath?: (path: string, basePath?: string) => void | Promise<void>;
+  onOpenBeadId?: (target: BeadLinkTarget) => void;
+  pathLinkPrefixes?: string[];
   saveToast?: SaveToast | null;
   onDismissToast?: () => void;
   /** The chat panel rendered as-is (never unmounted). */
@@ -50,6 +57,7 @@ interface TabbedContentAreaProps {
 export function TabbedContentArea({
   activeTab,
   openFiles,
+  openBeads = [],
   workspaceAgentId,
   onSelectTab,
   onCloseTab,
@@ -57,11 +65,14 @@ export function TabbedContentArea({
   onSaveFile,
   onRetryFile,
   onReloadFile,
+  onOpenWorkspacePath,
+  onOpenBeadId,
+  pathLinkPrefixes,
   saveToast,
   onDismissToast,
   chatPanel,
 }: TabbedContentAreaProps) {
-  const hasOpenFiles = openFiles.length > 0;
+  const hasOpenTabs = openFiles.length > 0 || openBeads.length > 0;
   const visibleSaveToast = saveToast && (!saveToast.agentId || saveToast.agentId === workspaceAgentId)
     ? saveToast
     : null;
@@ -69,10 +80,11 @@ export function TabbedContentArea({
   return (
     <div className="h-full flex flex-col min-h-0 min-w-0">
       {/* Tab bar — only shown when files are open */}
-      {hasOpenFiles && (
+      {hasOpenTabs && (
         <EditorTabBar
           activeTab={activeTab}
           openFiles={openFiles}
+          openBeads={openBeads}
           onSelectTab={onSelectTab}
           onCloseTab={onCloseTab}
         />
@@ -82,7 +94,7 @@ export function TabbedContentArea({
       <div className="flex-1 min-h-0 relative">
         {/* Chat panel — always mounted, hidden when file tab is active */}
         <div
-          className={activeTab === 'chat' || !hasOpenFiles ? 'h-full' : 'hidden'}
+          className={activeTab === 'chat' || !hasOpenTabs ? 'h-full' : 'hidden'}
           role="tabpanel"
           id="tabpanel-chat"
           aria-labelledby="tab-chat"
@@ -101,6 +113,18 @@ export function TabbedContentArea({
           >
             {isImageFile(file.name) ? (
               <ImageViewer file={file} agentId={workspaceAgentId} />
+            ) : isPdfFile(file.name) ? (
+              <PdfViewer file={file} agentId={workspaceAgentId} />
+            ) : isMarkdownFile(file.name) ? (
+              <MarkdownDocumentView
+                file={file}
+                onContentChange={onContentChange}
+                onSave={onSaveFile}
+                onRetry={onRetryFile}
+                onOpenWorkspacePath={onOpenWorkspacePath}
+                onOpenBeadId={onOpenBeadId}
+                workspaceAgentId={workspaceAgentId}
+              />
             ) : (
               <Suspense fallback={<EditorFallback />}>
                 <FileEditor
@@ -111,6 +135,29 @@ export function TabbedContentArea({
                 />
               </Suspense>
             )}
+          </div>
+        ))}
+
+        {/* Bead viewer tabs */}
+        {openBeads.map((bead) => (
+          <div
+            key={bead.id}
+            className={activeTab === bead.id ? 'h-full' : 'hidden'}
+            role="tabpanel"
+            id={`tabpanel-${bead.id}`}
+            aria-labelledby={`tab-${bead.id}`}
+          >
+            <BeadViewerTab
+              beadTarget={{
+                beadId: bead.beadId,
+                explicitTargetPath: bead.explicitTargetPath,
+                currentDocumentPath: bead.currentDocumentPath,
+                workspaceAgentId: bead.workspaceAgentId,
+              }}
+              onOpenBeadId={onOpenBeadId}
+              onOpenWorkspacePath={onOpenWorkspacePath}
+              pathLinkPrefixes={pathLinkPrefixes}
+            />
           </div>
         ))}
 

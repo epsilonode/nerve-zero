@@ -16,9 +16,10 @@ import { broadcast } from '../routes/events.js';
 import { config } from './config.js';
 import { resolveAgentWorkspace, type AgentWorkspace } from './agent-workspace.js';
 import { isBinary, isExcluded } from './file-utils.js';
+import { listConfiguredAgentWorkspaces, resolveOpenClawConfigPath } from './openclaw-config.js';
 import { isWorkspaceLocal } from './workspace-detect.js';
 
-let rootDirWatcher: FSWatcher | null = null;
+const rootDirWatchers = new Map<string, FSWatcher>();
 const memoryWatchers = new Map<string, FSWatcher>();
 const memoryDirWatchers = new Map<string, FSWatcher>();
 const workspaceWatchers = new Map<string, FSWatcher>();
@@ -72,6 +73,16 @@ function discoverWorkspaces(): AgentWorkspace[] {
   const workspaces = new Map<string, AgentWorkspace>();
   const mainWorkspace = resolveAgentWorkspace('main');
   workspaces.set(mainWorkspace.agentId, mainWorkspace);
+
+  for (const configured of listConfiguredAgentWorkspaces()) {
+    if (configured.agentId === 'main') continue;
+    workspaces.set(configured.agentId, {
+      agentId: configured.agentId,
+      workspaceRoot: configured.workspaceRoot,
+      memoryPath: path.join(configured.workspaceRoot, 'MEMORY.md'),
+      memoryDir: path.join(configured.workspaceRoot, 'memory'),
+    });
+  }
 
   const openclawDir = path.join(config.home, '.openclaw');
   if (!existsSync(openclawDir)) {
@@ -190,16 +201,35 @@ function refreshWorkspaceWatchers(): void {
 
 function startRootWorkspaceWatcher(): void {
   const openclawDir = path.join(config.home, '.openclaw');
-  if (rootDirWatcher || !existsSync(openclawDir)) return;
+  if (rootDirWatchers.size > 0) return;
 
   try {
-    rootDirWatcher = watch(openclawDir, (_eventType, filename) => {
-      const file = getWatchFilename(filename);
-      if (!file) return;
-      if (file === 'workspace' || file.startsWith(WORKSPACE_PREFIX)) {
-        refreshWorkspaceWatchers();
-      }
-    });
+    const configPath = resolveOpenClawConfigPath();
+    const configDir = path.dirname(configPath);
+    const configBasename = path.basename(configPath);
+    const watchTargets = new Set<string>();
+
+    if (existsSync(openclawDir)) watchTargets.add(openclawDir);
+    if (existsSync(configDir)) watchTargets.add(configDir);
+
+    for (const watchTarget of watchTargets) {
+      const watcher = watch(watchTarget, (_eventType, filename) => {
+        const file = getWatchFilename(filename);
+        if (!file) return;
+
+        const isConfigUpdate = watchTarget === configDir && file === configBasename;
+        const isWorkspaceDiscovery = watchTarget === openclawDir && (
+          file === 'workspace' ||
+          file.startsWith(WORKSPACE_PREFIX)
+        );
+
+        if (isConfigUpdate || isWorkspaceDiscovery) {
+          refreshWorkspaceWatchers();
+        }
+      });
+
+      rootDirWatchers.set(watchTarget, watcher);
+    }
   } catch (err) {
     console.warn('[file-watcher] Failed to watch workspace root for new agent workspaces:', (err as Error).message);
   }
@@ -229,7 +259,7 @@ export async function startFileWatcher(): Promise<void> {
   startRootWorkspaceWatcher();
 
   if (!config.workspaceWatchRecursive) {
-    console.log('[file-watcher] Workspace recursive watch disabled (default). Set NERVE_WATCH_WORKSPACE_RECURSIVE=true to re-enable SSE file.changed events outside memory/.');
+    console.log('[file-watcher] Workspace recursive watch disabled via NERVE_WATCH_WORKSPACE_RECURSIVE=false. SSE file.changed events outside memory/ are off.');
   }
 }
 
@@ -238,8 +268,7 @@ export async function startFileWatcher(): Promise<void> {
  * Call this during graceful shutdown.
  */
 export function stopFileWatcher(): void {
-  rootDirWatcher?.close();
-  rootDirWatcher = null;
+  closeWatchers(rootDirWatchers);
   closeWatchers(memoryWatchers);
   closeWatchers(memoryDirWatchers);
   closeWatchers(workspaceWatchers);

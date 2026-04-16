@@ -33,6 +33,7 @@ export function ImageViewer({ file, agentId }: ImageViewerProps) {
   return (
     <div className="h-full flex items-center justify-center p-6 overflow-auto bg-[#0a0a0a]">
       <img
+        key={`image-${file.path}-v${file.viewerVersion ?? 0}`}
         src={`/api/files/raw?path=${encodeURIComponent(file.path)}&agentId=${encodeURIComponent(agentId)}`}
         alt={file.name}
         className="max-w-full max-h-full object-contain rounded"
