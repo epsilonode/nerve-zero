@@ -78,7 +78,7 @@ app.use(
 app.use('*', authMiddleware);
 // Apply compression to all routes except SSE (compression buffers chunks and breaks streaming)
 app.use('*', async (c, next) => {
-  if (c.req.path === '/api/events') return next();
+  if (c.req.path === '/api/events' || c.req.path === '/api/files/raw') return next();
   return compress()(c, next);
 });
 app.use('*', cacheHeaders);

@@ -30,13 +30,13 @@ describe('securityHeaders middleware', () => {
     expect(csp).toBeTruthy();
     expect(csp).toContain("default-src 'self'");
     expect(csp).toContain("script-src 'self'");
-    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("frame-ancestors 'self'");
   });
 
-  it('sets X-Frame-Options to DENY', async () => {
+  it('sets X-Frame-Options to SAMEORIGIN', async () => {
     const app = await buildApp();
     const res = await app.request('/test');
-    expect(res.headers.get('X-Frame-Options')).toBe('DENY');
+    expect(res.headers.get('X-Frame-Options')).toBe('SAMEORIGIN');
   });
 
   it('sets X-Content-Type-Options to nosniff', async () => {

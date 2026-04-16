@@ -1,6 +1,6 @@
 import { ChevronRight, ChevronDown, Loader2 } from 'lucide-react';
 import { FileIcon, FolderIcon } from './utils/fileIcons';
-import { isImageFile } from './utils/fileTypes';
+import { isImageFile, isPdfFile } from './utils/fileTypes';
 import type { TreeEntry } from './types';
 
 interface FileTreeNodeProps {
@@ -67,7 +67,7 @@ export function FileTreeNode({
     }
   };
 
-  const canOpen = !isDir && (!entry.binary || isImageFile(entry.name));
+  const canOpen = !isDir && (!entry.binary || isImageFile(entry.name) || isPdfFile(entry.name));
 
   const handleDoubleClick = () => {
     if (canOpen && !isRenaming) {

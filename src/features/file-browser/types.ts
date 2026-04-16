@@ -29,4 +29,6 @@ export interface OpenFile {
   loading: boolean;
   /** Error message if fetch failed. */
   error?: string;
+  /** Version counter for raw asset viewers (images, PDFs) to trigger remount. */
+  viewerVersion?: number;
 }

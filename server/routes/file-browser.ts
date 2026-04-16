@@ -17,6 +17,8 @@
 
 import { Hono, type Context } from 'hono';
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
+import { Readable } from 'node:stream';
 import path from 'node:path';
 import {
   getWorkspaceRoot,
@@ -754,6 +756,7 @@ const MIME_TYPES: Record<string, string> = {
   '.avif': 'image/avif',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
+  '.pdf': 'application/pdf',
 };
 
 /** Check if a file is a supported image. */
@@ -795,18 +798,94 @@ app.get('/api/files/raw', async (c) => {
     if (!stat.isFile()) {
       return c.json({ ok: false, error: 'Not a file' }, 400);
     }
-    // Cap at 10MB for images
-    if (stat.size > 10_485_760) {
-      return c.json({ ok: false, error: 'File too large (max 10MB)' }, 413);
+    // Cap at 10MB for images, 50 MB for PDFs (can adjust as needed)
+    const maxSize = ext === '.pdf' ? 52_428_800 : 10_485_760;
+    if (stat.size > maxSize) {
+      return c.json({ ok: false, error: `File too large (max ${ext === '.pdf' ? '50MB' : '10MB'})` }, 413);
     }
 
-    const buffer = await fs.readFile(resolved);
-    return new Response(buffer, {
-      headers: {
-        'Content-Type': mime,
-        'Content-Length': String(stat.size),
-        'Cache-Control': 'no-cache',
-      },
+    // Parse Range header for PDFs to support partial content requests
+    let start = 0;
+    let end = stat.size - 1;
+    let statusCode = 200;
+    let rangeHeader: string | undefined;
+
+    const rangeHeaderValue = c.req.header('range');
+    if (rangeHeaderValue && ext === '.pdf') {
+      // Match both explicit ranges (bytes=100-200) and suffix ranges (bytes=-500)
+      const rangeMatch = rangeHeaderValue.match(/^bytes=(\d*)-(\d*)$/);
+      if (rangeMatch) {
+        const hasSuffix = rangeMatch[1] === '';
+        let rangeStart: number;
+        let rangeEnd: number;
+        let isValid = false;
+
+        if (hasSuffix) {
+          // Suffix range: bytes=-500 means last 500 bytes
+          const suffixLen = parseInt(rangeMatch[2], 10);
+          rangeStart = Math.max(0, stat.size - suffixLen);
+          rangeEnd = stat.size - 1;
+          isValid = suffixLen > 0;
+        } else {
+          rangeStart = parseInt(rangeMatch[1], 10);
+          rangeEnd = rangeMatch[2] ? parseInt(rangeMatch[2], 10) : stat.size - 1;
+          isValid = rangeStart >= 0 && rangeStart <= rangeEnd && rangeEnd < stat.size;
+        }
+
+        // Validate and apply range
+        if (isValid) {
+          start = rangeStart;
+          end = rangeEnd;
+          statusCode = 206;
+          rangeHeader = `bytes ${start}-${end}/${stat.size}`;
+        } else {
+          // Invalid range
+          return new Response('', {
+            status: 416,
+            headers: {
+              'Content-Range': `bytes */${stat.size}`,
+            },
+          });
+        }
+      }
+    }
+
+    // Stream file with optional range support
+    const fileStream = fsSync.createReadStream(resolved, { start, end });
+    fileStream.on('error', (err) => {
+      console.error(`[file-browser] Stream error for ${filePath}:`, err.message);
+    });
+
+    // Add error listener to surface stream failures for easier debugging
+    fileStream.on('error', (err) => {
+      console.error('[file-browser] fileStream error:', {
+        path: resolved,
+        rangeStart: start,
+        rangeEnd: end,
+        error: (err as Error).message,
+      });
+    });
+    
+    // Convert Node.js stream to Web Stream using Node's built-in conversion
+    const webStream = Readable.toWeb(fileStream);
+    
+    const responseHeaders: Record<string, string> = {
+      'Content-Type': mime,
+      'Content-Length': String(end - start + 1),
+      'Cache-Control': 'no-cache',
+    };
+
+    // Add Range headers for partial content responses
+    if (ext === '.pdf') {
+      responseHeaders['Accept-Ranges'] = 'bytes';
+      if (rangeHeader) {
+        responseHeaders['Content-Range'] = rangeHeader;
+      }
+    }
+
+    return new Response(webStream, {
+      status: statusCode,
+      headers: responseHeaders,
     });
   } catch {
     return c.json({ ok: false, error: 'Failed to read file' }, 500);
