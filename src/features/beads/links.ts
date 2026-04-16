@@ -135,5 +135,8 @@ export function buildBeadTabId(target: BeadLinkTarget | string): string {
   const explicitTargetPath = isAbsoluteFilesystemPath(target.explicitTargetPath)
     ? canonicalizeAbsoluteExplicitTargetPath(target.explicitTargetPath)
     : target.explicitTargetPath;
-  return `bead://${workspaceAgentId}:${currentDocumentPath}:${explicitTargetPath}#${target.beadId}`;
+  const tabSourceDocumentPath = isAbsoluteFilesystemPath(target.explicitTargetPath)
+    ? ''
+    : currentDocumentPath;
+  return `bead://${workspaceAgentId}:${tabSourceDocumentPath}:${explicitTargetPath}#${target.beadId}`;
 }
