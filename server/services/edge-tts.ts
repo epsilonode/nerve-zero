@@ -1,7 +1,7 @@
 /**
  * Edge TTS — free text-to-speech via Microsoft Edge's speech service.
  *
- * Implements the WebSocket protocol directly (no npm dependency beyond `ws`).
+ * Implements the WebSocket protocol directly (no extra dependency beyond `ws`).
  * Uses the same endpoint the Edge browser's Read Aloud feature talks to.
  * Includes Sec-MS-GEC token generation for anti-abuse auth.
  *

@@ -37,8 +37,8 @@ vi.mock('../middleware/rate-limit.js', () => ({
   rateLimitGeneral: vi.fn((_c: unknown, next: () => Promise<void>) => next()),
 }));
 
-vi.mock('../lib/openclaw-bin.js', () => ({
-  resolveOpenclawBin: () => '/usr/bin/openclaw',
+vi.mock('../lib/zeroclaw-bin.js', () => ({
+  resolveZeroclawBin: () => '/usr/bin/ZeroClaw',
 }));
 
 const RAW_SKILLS = [
@@ -63,8 +63,8 @@ describe('GET /api/skills', () => {
   beforeEach(async () => {
     vi.resetModules();
     homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'skills-routes-test-'));
-    mainWorkspace = path.join(homeDir, '.openclaw', 'workspace');
-    researchWorkspace = path.join(homeDir, '.openclaw', 'workspace-research');
+    mainWorkspace = path.join(homeDir, '.ZeroClaw', 'workspace');
+    researchWorkspace = path.join(homeDir, '.ZeroClaw', 'workspace-research');
     memoryPath = path.join(mainWorkspace, 'MEMORY.md');
     memoryDir = path.join(mainWorkspace, 'memory');
 
@@ -211,14 +211,14 @@ describe('GET /api/skills', () => {
     expect(json.skills[1].name).toBe('github');
   });
 
-  it('fails loud when openclaw binary is missing', async () => {
+  it('fails loud when ZeroClaw binary is missing', async () => {
     execFileImpl = (_bin, args, _opts, cb) => {
       if (args[0] === 'config' && args[1] === 'set') {
         cb(null, '', '');
         return;
       }
 
-      const err = Object.assign(new Error('spawn /usr/bin/openclaw ENOENT'), { code: 'ENOENT' });
+      const err = Object.assign(new Error('spawn /usr/bin/ZeroClaw ENOENT'), { code: 'ENOENT' });
       cb(err, '', '');
     };
 

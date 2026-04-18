@@ -8,7 +8,6 @@ import { useMessageSearch } from './useMessageSearch';
 import { ActivityLog, ChatHeader, ProcessingIndicator, ScrollToBottomButton, StreamingMessage, ToolGroupBlock } from './components';
 import { isMessageCollapsible } from './types';
 import type { ChatMsg, ImageAttachment, OutgoingUploadPayload } from './types';
-import type { BeadLinkTarget } from '@/features/beads';
 
 interface ChatPanelProps {
   messages: ChatMsg[];
@@ -46,19 +45,10 @@ interface ChatPanelProps {
   onOpenWorkspacePath?: (path: string) => void | Promise<void>;
   /** Configured path prefixes that should render as clickable inline path links. */
   pathLinkPrefixes?: string[];
-  /** Configured shorthand aliases that should normalize to canonical workspace paths. */
-  pathLinkAliases?: Record<string, string>;
-  /** Open a dedicated bead viewer tab. */
-  onOpenBeadId?: (target: BeadLinkTarget) => void | Promise<void>;
-  /** Whether to show the compact Commands launcher inside the composer. */
-  showCommandPaletteButton?: boolean;
-  /** Open the command palette from the compact composer launcher. */
-  onOpenCommandPalette?: () => void;
 }
 
 export interface ChatPanelHandle {
   focusInput: () => void;
-  addWorkspacePath: (path: string, kind: 'file' | 'directory', agentId?: string) => Promise<void>;
 }
 
 /** Main chat panel with message list, infinite scroll, search, and input bar. */
@@ -72,10 +62,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
   onToggleMobileTopBar, isMobileTopBarHidden = false,
   onOpenWorkspacePath,
   pathLinkPrefixes,
-  pathLinkAliases,
-  onOpenBeadId,
-  showCommandPaletteButton = false,
-  onOpenCommandPalette,
 }, ref) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const messageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
@@ -133,10 +119,7 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
 
   // Expose focusInput to parent
   useImperativeHandle(ref, () => ({
-    focusInput: () => inputBarRef.current?.focus(),
-    addWorkspacePath: async (path: string, kind: 'file' | 'directory', agentId?: string) => {
-      await inputBarRef.current?.addWorkspacePath(path, kind, agentId);
-    },
+    focusInput: () => inputBarRef.current?.focus()
   }), []);
 
   // Clean up stale messageRefs when messages change
@@ -354,8 +337,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
                 agentName={agentName}
                 onOpenWorkspacePath={onOpenWorkspacePath}
                 pathLinkPrefixes={pathLinkPrefixes}
-                pathLinkAliases={pathLinkAliases}
-                onOpenBeadId={onOpenBeadId}
               />
             </div>
           );
@@ -399,8 +380,6 @@ export const ChatPanel = forwardRef<ChatPanelHandle, ChatPanelProps>(function Ch
         isGenerating={isGenerating}
         onWakeWordState={onWakeWordState}
         agentName={agentName}
-        showCommandPaletteButton={showCommandPaletteButton}
-        onOpenCommandPalette={onOpenCommandPalette}
       />
 
     </div>

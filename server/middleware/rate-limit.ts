@@ -10,7 +10,7 @@
  */
 
 import type { Context, Next } from 'hono';
-import { getConnInfo } from '@hono/node-server/conninfo';
+import type { IncomingMessage } from 'node:http';
 
 interface RateLimitEntry {
   timestamps: number[];
@@ -63,11 +63,25 @@ if (extraProxies) {
 }
 
 /**
+ * Get the remote TCP address from the Hono context.
+ * Reads from env.incoming (IncomingMessage) which is set by our server handler.
+ */
+function getRemoteAddress(c: Context): string {
+  try {
+    const incoming = (c.env as { incoming?: IncomingMessage })?.incoming;
+    if (incoming?.socket?.remoteAddress) {
+      return incoming.socket.remoteAddress;
+    }
+  } catch { /* fall through */ }
+  return 'unknown';
+}
+
+/**
  * Get client identifier from request.
  *
- * Uses the real TCP socket address from Node.js (via getConnInfo) — not
- * spoofable request headers. Only trusts X-Forwarded-For / X-Real-IP when
- * the socket address belongs to a trusted proxy.
+ * Uses the real TCP socket address — not spoofable request headers.
+ * Only trusts X-Forwarded-For / X-Real-IP when the socket address
+ * belongs to a trusted proxy.
  */
 export function getClientId(c: Context): string {
   // Allow middleware-injected override (for testing / custom client identification)
@@ -75,13 +89,7 @@ export function getClientId(c: Context): string {
   if (override) return override;
 
   // Get the real TCP socket remote address (not spoofable)
-  let directIp = 'unknown';
-  try {
-    const info = getConnInfo(c);
-    directIp = info.remote.address || 'unknown';
-  } catch {
-    // getConnInfo may fail in test environments — fall back to 'unknown'
-  }
+  const directIp = getRemoteAddress(c);
 
   // Only trust forwarded headers from known proxy IPs
   if (TRUSTED_PROXIES.has(directIp)) {

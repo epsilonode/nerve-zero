@@ -145,7 +145,7 @@ describe('cron routes', () => {
       thinking: 'medium',
       agentId: 'main',
     }, 60000);
-    const runLedger = await fs.readFile(join(tempHome, '.openclaw', 'cron', 'nerve-manual-runs', 'job-123.jsonl'), 'utf8');
+    const runLedger = await fs.readFile(join(tempHome, '.ZeroClaw', 'cron', 'nerve-manual-runs', 'job-123.jsonl'), 'utf8');
     expect(runLedger).toContain('"summary":"Manual run started in a separate cron session."');
     expect(invokeGatewayTool).not.toHaveBeenCalledWith('cron', {
       action: 'run',
@@ -170,9 +170,9 @@ describe('cron routes', () => {
       }
       return { ok: true };
     });
-    await fs.mkdir(join(tempHome, '.openclaw', 'cron', 'nerve-manual-runs'), { recursive: true });
+    await fs.mkdir(join(tempHome, '.ZeroClaw', 'cron', 'nerve-manual-runs'), { recursive: true });
     await fs.writeFile(
-      join(tempHome, '.openclaw', 'cron', 'nerve-manual-runs', 'job-123.jsonl'),
+      join(tempHome, '.ZeroClaw', 'cron', 'nerve-manual-runs', 'job-123.jsonl'),
       '{"ts":2000,"jobId":"job-123","action":"spawned","status":"ok","summary":"Manual run started in a separate cron session.","runAtMs":2000,"manual":true}\n',
       'utf8',
     );
@@ -228,9 +228,9 @@ describe('cron routes', () => {
       }
       return { ok: true };
     });
-    await fs.mkdir(join(tempHome, '.openclaw', 'cron', 'nerve-manual-runs'), { recursive: true });
+    await fs.mkdir(join(tempHome, '.ZeroClaw', 'cron', 'nerve-manual-runs'), { recursive: true });
     await fs.writeFile(
-      join(tempHome, '.openclaw', 'cron', 'nerve-manual-runs', 'job-123.jsonl'),
+      join(tempHome, '.ZeroClaw', 'cron', 'nerve-manual-runs', 'job-123.jsonl'),
       '{"ts":2000,"jobId":"job-123","action":"spawned","status":"ok","summary":"Manual run started in a separate cron session.","runAtMs":2000,"manual":true}\n',
       'utf8',
     );
@@ -300,9 +300,9 @@ describe('cron routes', () => {
       }
       return { ok: true };
     });
-    await fs.mkdir(join(tempHome, '.openclaw', 'cron', 'nerve-manual-runs'), { recursive: true });
+    await fs.mkdir(join(tempHome, '.ZeroClaw', 'cron', 'nerve-manual-runs'), { recursive: true });
     await fs.writeFile(
-      join(tempHome, '.openclaw', 'cron', 'nerve-manual-runs', 'job-123.jsonl'),
+      join(tempHome, '.ZeroClaw', 'cron', 'nerve-manual-runs', 'job-123.jsonl'),
       '{"ts":2000,"jobId":"job-123","action":"spawned","status":"ok","summary":"Manual run started in a separate cron session.","runAtMs":2000,"manual":true}\n',
       'utf8',
     );

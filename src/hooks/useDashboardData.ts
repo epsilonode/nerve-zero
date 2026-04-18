@@ -198,7 +198,7 @@ export function useDashboardData(options: DashboardDataOptions = {}): DashboardD
       clearInterval(memIv);
       clearInterval(tokIv);
     };
-  }, [activeAgentId, refreshMemories, refreshTokens]);
+  }, [refreshMemories, refreshTokens]);
 
   return {
     memories,

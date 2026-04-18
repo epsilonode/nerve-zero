@@ -36,7 +36,14 @@ function timeoutSignal(ms: number): AbortSignal {
 }
 
 /** Fetch gateway connection defaults from the Nerve server. */
-async function fetchConnectDefaults(): Promise<{ wsUrl: string; token: string | null; authEnabled?: boolean; serverSideAuth?: boolean } | null> {
+async function fetchConnectDefaults(): Promise<{
+  wsUrl: string;
+  token: string | null;
+  authEnabled?: boolean;
+  serverSideAuth?: boolean;
+  gatewayReachable?: boolean;
+  handshakeRequired?: boolean;
+} | null> {
   try {
     const resp = await fetch('/api/connect-defaults', { signal: timeoutSignal(3000) });
     if (!resp.ok) return null;
@@ -107,10 +114,12 @@ export function useConnectionManager(): ConnectionManagerState {
       if (
         isServerSideAuth &&
         officialWsUrl &&
+        defaults?.gatewayReachable !== false &&
+        defaults?.handshakeRequired !== true &&
         (!savedUrl || savedMatchesOfficial)
       ) {
         handleConnect(officialWsUrl, '').catch(() => {
-          // Auto-connect failed - user can manually connect via dialog
+          setDialogOpen(true);
         });
       }
     });

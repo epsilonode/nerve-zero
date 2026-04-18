@@ -2,7 +2,7 @@
  * Shared gateway tool invocation client.
  *
  * Provides a single {@link invokeGatewayTool} function used by route handlers
- * (crons, memories, gateway, etc.) to call OpenClaw gateway tools via its
+ * (crons, memories, gateway, etc.) to call ZeroClaw gateway tools via its
  * `POST /tools/invoke` HTTP API. Eliminates duplication across route files.
  * @module
  */

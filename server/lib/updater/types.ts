@@ -53,8 +53,7 @@ export interface ResolvedVersion {
 
 export interface PreflightResult {
   gitVersion: string;
-  nodeVersion: string;
-  npmVersion: string;
+  bunVersion: string;
   isGitRepo: boolean;
   hasWritePermission: boolean;
 }

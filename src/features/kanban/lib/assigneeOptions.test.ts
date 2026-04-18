@@ -20,8 +20,8 @@ describe('assigneeOptions', () => {
     expect(buildAssigneeOptions(sessions, 'Nerve')).toEqual([
       { value: '', label: 'Unassigned' },
       { value: 'operator', label: 'Operator' },
-      { value: 'agent:designer', label: 'designer' },
-      { value: 'agent:reviewer', label: 'reviewer' },
+      { value: 'agent:designer', label: 'Alpha Agent' },
+      { value: 'agent:reviewer', label: 'Reviewer' },
     ]);
   });
 
@@ -38,19 +38,6 @@ describe('assigneeOptions', () => {
     ]);
   });
 
-  it('uses identity-backed labels for hydrated root agents', () => {
-    const sessions = [
-      session('agent:main:main'),
-      session('agent:designer:main', { identityName: 'Designer Prime' }),
-    ];
-
-    expect(buildAssigneeOptions(sessions, 'Nerve')).toEqual([
-      { value: '', label: 'Unassigned' },
-      { value: 'operator', label: 'Operator' },
-      { value: 'agent:designer', label: 'Designer Prime (designer)' },
-    ]);
-  });
-
   it('ignores non-top-level sessions', () => {
     const sessions = [
       session('agent:main:main'),
@@ -63,7 +50,7 @@ describe('assigneeOptions', () => {
     expect(buildAssigneeOptions(sessions, 'Nerve')).toEqual([
       { value: '', label: 'Unassigned' },
       { value: 'operator', label: 'Operator' },
-      { value: 'agent:builder', label: 'builder' },
+      { value: 'agent:builder', label: 'Builder' },
     ]);
   });
 
@@ -76,7 +63,7 @@ describe('assigneeOptions', () => {
     expect(buildAssigneeOptionsForEdit(sessions, 'agent:design-reviewer-2', 'Nerve')).toEqual([
       { value: '', label: 'Unassigned' },
       { value: 'operator', label: 'Operator' },
-      { value: 'agent:reviewer', label: 'reviewer' },
+      { value: 'agent:reviewer', label: 'Reviewer' },
       { value: 'agent:design-reviewer-2', label: 'Agent design reviewer 2 (inactive)', disabled: true },
     ]);
   });
@@ -90,7 +77,7 @@ describe('assigneeOptions', () => {
     const expected = [
       { value: '', label: 'Unassigned' },
       { value: 'operator', label: 'Operator' },
-      { value: 'agent:reviewer', label: 'reviewer' },
+      { value: 'agent:reviewer', label: 'Reviewer' },
     ];
 
     expect(buildAssigneeOptionsForEdit(sessions, '')).toEqual(expected);
@@ -108,7 +95,7 @@ describe('assigneeOptions', () => {
     expect(buildAssigneeOptionsForEdit(sessions, ' agent:reviewer ')).toEqual([
       { value: '', label: 'Unassigned' },
       { value: 'operator', label: 'Operator' },
-      { value: 'agent:reviewer', label: 'reviewer' },
+      { value: 'agent:reviewer', label: 'Reviewer' },
     ]);
   });
 

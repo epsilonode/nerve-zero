@@ -39,28 +39,27 @@ If `~/nerve` already exists:
 3. prefer safe validation, restart, repair, or non-destructive reconfigure work
 4. ask before reinstalling, replacing, deleting, or hard-resetting anything
 
-## OpenClaw dependency handling
+## ZeroClaw dependency handling
 
-Nerve depends on an OpenClaw gateway.
+Nerve depends on an ZeroClaw gateway.
 
 You must:
 1. detect whether a usable gateway already exists
 2. prefer using an existing reachable gateway
 3. explain the dependency if no usable gateway is found
-4. ask before installing OpenClaw if it is missing
+4. ask before installing ZeroClaw if it is missing
 
-You may apply minimal localhost-safe OpenClaw changes automatically when needed for the default local path. Examples:
+You may apply minimal localhost-safe ZeroClaw changes automatically when needed for the default local path. Examples:
 - adding missing local control UI origins
 - adding required gateway tool allow entries such as `cron`, `gateway`, and `sessions_spawn`
 - fixing local device pairing or scopes needed for Nerve to connect
 
-Ask first before any OpenClaw change that is remote, public, security-sensitive, destructive, or changes network exposure.
+Ask first before any ZeroClaw change that is remote, public, security-sensitive, destructive, or changes network exposure.
 
 ## Prerequisite handling
 
 For supported local installs, you may automatically install missing core prerequisites required by the installer or build flow, including package-manager-installed dependencies such as:
-- Node.js 22+
-- npm
+- Bun 1.0+
 - git
 - build tools required for native modules
 
@@ -74,7 +73,7 @@ If prerequisite installation is impossible, fail clearly and say what is missing
 ## Consent boundaries
 
 Ask for confirmation before any of the following:
-- installing OpenClaw
+- installing ZeroClaw
 - exposing Nerve beyond localhost
 - LAN exposure
 - public internet exposure
@@ -105,8 +104,8 @@ Follow this order unless the user explicitly asks for a different topology.
 
 Check:
 - whether `~/nerve` already exists
-- whether `openclaw` is installed
-- whether the OpenClaw gateway is reachable
+- whether `ZeroClaw` is installed
+- whether the ZeroClaw gateway is reachable
 - whether a gateway token can be detected
 
 ### 2. Prefer the installer
@@ -120,7 +119,7 @@ If you are inside a local checkout of this repo, prefer:
 If you are operating from GitHub or a raw-doc context without a local checkout, prefer:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/daggerhashimoto/openclaw-nerve/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/daggerhashimoto/ZeroClaw-nerve/master/install.sh | bash
 ```
 
 ### 3. Prefer the setup wizard
@@ -131,7 +130,7 @@ If no TTY is available and the target remains the safe local path, you may use:
 
 ```bash
 cd ~/nerve
-npm run setup -- --defaults
+bun run setup -- --defaults
 ```
 
 If the requested topology is LAN, Tailscale, remote gateway, cloud, or any other non-localhost path, do not guess. Ask first unless the user already specified that topology clearly.
@@ -143,9 +142,9 @@ If the installer or wizard cannot be used, do the smallest correct manual fallba
 If the repo is not present locally:
 
 ```bash
-git clone https://github.com/daggerhashimoto/openclaw-nerve.git ~/nerve
+git clone https://github.com/daggerhashimoto/ZeroClaw-nerve.git ~/nerve
 cd ~/nerve
-npm install
+bun install
 ```
 
 If you need explicit minimal local config, write `.env` with at least:
@@ -168,7 +167,7 @@ Typical commands:
 
 ```bash
 # build artifacts
-npm run build
+bun run build
 
 # Linux, service managed
 sudo systemctl restart nerve.service
@@ -178,7 +177,7 @@ launchctl stop com.nerve.server || true
 launchctl start com.nerve.server
 
 # no service manager present
-npm run prod
+bun start
 ```
 
 ## Topology branching
@@ -196,7 +195,7 @@ Choose the branch based on the user's intended topology, not on low-level subsys
 Only report success when all of the following are true:
 - Nerve is installed at the intended path
 - Nerve starts successfully
-- it is configured against the intended OpenClaw gateway
+- it is configured against the intended ZeroClaw gateway
 - access and auth behavior match the chosen mode
 - a minimal smoke test passes
 
@@ -207,14 +206,14 @@ Keep the smoke test small and explicit.
 1. Confirm the Nerve process or service is running.
 2. Confirm the expected Nerve URL responds.
    - local default: `http://127.0.0.1:3080/health`
-3. Confirm the intended OpenClaw gateway is reachable.
+3. Confirm the intended ZeroClaw gateway is reachable.
 4. Confirm `.env` points to that gateway.
 5. If auth is enabled or network access was requested, confirm the login surface or expected protected access behavior is present.
 
 Useful checks:
 
 ```bash
-openclaw gateway status
+ZeroClaw gateway status
 curl -fsS http://127.0.0.1:18789/health
 curl -fsS http://127.0.0.1:3080/health
 ```

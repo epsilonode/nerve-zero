@@ -13,7 +13,6 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import { config } from '../lib/config.js';
-import { getDefaultAgentWorkspaceRoot } from '../lib/openclaw-config.js';
 import { rateLimitGeneral } from '../middleware/rate-limit.js';
 
 const app = new Hono();
@@ -37,7 +36,7 @@ async function execFileText(file: string, args: string[]): Promise<string> {
   });
 }
 
-const GATEWAY_COMM_PREFIX = 'openclaw-gatewa';
+const GATEWAY_COMM_PREFIX = 'ZeroClaw-gatewa';
 
 async function getGatewayPidFromPgrep(): Promise<string> {
   const stdout = await execFileText('pgrep', ['-f', GATEWAY_COMM_PREFIX]);
@@ -50,7 +49,7 @@ async function getGatewayPidFromPs(): Promise<string> {
     const match = line.trim().match(/^(\d+)\s+(.+)$/);
     if (!match) continue;
     const [, pid, comm] = match;
-    if (comm === 'openclaw-gateway' || comm.startsWith(GATEWAY_COMM_PREFIX)) return pid;
+    if (comm === 'ZeroClaw-gateway' || comm.startsWith(GATEWAY_COMM_PREFIX)) return pid;
   }
   return '';
 }
@@ -92,7 +91,7 @@ async function getGatewayStartedAtPs(pidStr: string): Promise<number | null> {
 }
 
 /**
- * Determine when the OpenClaw gateway process started.
+ * Determine when the ZeroClaw gateway process started.
  *
  * Uses `pgrep` to find the gateway PID, then reads `/proc/<pid>/stat` on
  * Linux or `ps -p <pid> -o lstart=` elsewhere. Result is cached for 30 s.
@@ -127,7 +126,6 @@ app.get('/api/server-info', rateLimitGeneral, async (c) => {
     gatewayStartedAt: await getGatewayStartedAt(),
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     agentName: config.agentName,
-    defaultAgentWorkspaceRoot: getDefaultAgentWorkspaceRoot(),
   });
 });
 

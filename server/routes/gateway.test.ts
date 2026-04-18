@@ -31,8 +31,8 @@ vi.mock('../middleware/rate-limit.js', () => ({
   rateLimitRestart: vi.fn((_c: unknown, next: () => Promise<void>) => next()),
 }));
 
-vi.mock('../lib/openclaw-bin.js', () => ({
-  resolveOpenclawBin: () => '/usr/bin/openclaw',
+vi.mock('../lib/zeroclaw-bin.js', () => ({
+  resolveZeroclawBin: () => '/usr/bin/ZeroClaw',
 }));
 
 vi.mock('../lib/gateway-client.js', () => ({
@@ -67,7 +67,7 @@ vi.mock('node:net', () => {
   return { Socket: MockSocket, default: { Socket: MockSocket } };
 });
 
-const OPENCLAW_CONFIG = {
+const ZeroClaw_CONFIG = {
   agents: {
     defaults: {
       model: {
@@ -99,23 +99,23 @@ function buildApp() {
 describe('gateway routes', () => {
   afterEach(() => {
     vi.restoreAllMocks();
-    delete process.env.OPENCLAW_CONFIG_PATH;
+    delete process.env.ZeroClaw_CONFIG_PATH;
   });
 
   function setDefaults() {
     execFileImpl = (_bin: unknown, _args: unknown, _opts: unknown, cb: unknown) => {
       (cb as (err: null, stdout: string) => void)(null, '');
     };
-    readFileImpl = async () => JSON.stringify(OPENCLAW_CONFIG);
+    readFileImpl = async () => JSON.stringify(ZeroClaw_CONFIG);
     invokeGatewayImpl = () => ({});
   }
 
   describe('GET /api/gateway/models', () => {
     it('returns the configured primary model', async () => {
       setDefaults();
-      process.env.OPENCLAW_CONFIG_PATH = '/tmp/openclaw.json';
+      process.env.ZeroClaw_CONFIG_PATH = '/tmp/ZeroClaw.json';
       readFileImpl = async (path: unknown) => {
-        expect(path).toBe('/tmp/openclaw.json');
+        expect(path).toBe('/tmp/ZeroClaw.json');
         return JSON.stringify({
           agents: {
             defaults: {
@@ -355,16 +355,16 @@ describe('gateway routes', () => {
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({
         models: [],
-        error: 'No models configured in OpenClaw config.',
+        error: 'No models configured in ZeroClaw config.',
         source: 'config',
       });
     });
 
-    it('returns configured models when the OpenClaw config uses JSON5 syntax', async () => {
+    it('returns configured models when the ZeroClaw config uses JSON5 syntax', async () => {
       setDefaults();
       readFileImpl = async () => `
         {
-          // OpenClaw config often includes comments and trailing commas
+          // ZeroClaw config often includes comments and trailing commas
           agents: {
             defaults: {
               model: {
@@ -420,7 +420,7 @@ describe('gateway routes', () => {
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({
         models: [],
-        error: 'Could not read OpenClaw config.',
+        error: 'Could not read ZeroClaw config.',
         source: 'config',
       });
     });
@@ -444,8 +444,8 @@ describe('gateway routes', () => {
         rateLimitGeneral: vi.fn((_c: unknown, next: () => Promise<void>) => next()),
         rateLimitRestart: vi.fn((_c: unknown, next: () => Promise<void>) => next()),
       }));
-      vi.doMock('../lib/openclaw-bin.js', () => ({
-        resolveOpenclawBin: () => '/usr/bin/openclaw',
+      vi.doMock('../lib/zeroclaw-bin.js', () => ({
+        resolveZeroclawBin: () => '/usr/bin/ZeroClaw',
       }));
       vi.doMock('../lib/gateway-client.js', () => ({
         invokeGatewayTool: vi.fn(async (tool: string, args: Record<string, unknown>) => invokeGatewayImpl(tool, args)),

@@ -1,5 +1,5 @@
 /**
- * Mock OpenClaw gateway WebSocket server for testing.
+ * Mock ZeroClaw gateway WebSocket server for testing.
  *
  * Simulates the gateway WS protocol: challenge/response handshake,
  * chat message streaming, session CRUD, and error injection.
@@ -23,7 +23,7 @@ export interface ReceivedMessage {
 }
 
 /**
- * A mock WebSocket server that mimics the OpenClaw gateway protocol.
+ * A mock WebSocket server that mimics the ZeroClaw gateway protocol.
  */
 export class MockGateway {
   private httpServer: Server;

@@ -1,7 +1,7 @@
 /**
- * Auto-detect gateway token from the local OpenClaw configuration.
+ * Auto-detect gateway token from the local ZeroClaw configuration.
  *
- * Reads ~/.openclaw/openclaw.json and extracts the gateway auth token.
+ * Reads ~/.ZeroClaw/ZeroClaw.json and extracts the gateway auth token.
  * This avoids requiring users to manually copy-paste the token during setup.
  */
 
@@ -13,9 +13,13 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 
 const HOME = process.env.HOME || os.homedir();
-const OPENCLAW_CONFIG = join(HOME, '.openclaw', 'openclaw.json');
+const ZeroClaw_CONFIG = join(HOME, '.ZeroClaw', 'ZeroClaw.json');
+const ZEROCLAW_TOML_CONFIG_PATHS = [
+  join(HOME, '.zeroclaw', 'config.toml'),
+  join(HOME, '.ZeroClaw', 'config.toml'),
+];
 
-interface OpenClawConfig {
+interface ZeroClawConfig {
   gateway?: {
     port?: number;
     bind?: string;
@@ -46,26 +50,44 @@ export interface GatewayTokenChoice {
 }
 
 /**
- * Attempt to auto-detect gateway configuration from the local OpenClaw install.
+ * Attempt to auto-detect gateway configuration from the local ZeroClaw install.
  * Returns null values for anything that can't be detected.
  */
 export function detectGatewayConfig(): DetectedGateway {
   const result: DetectedGateway = { token: null, url: null };
 
   // The gateway process prefers the systemd env var over the config file token,
-  // so detect it first even when openclaw.json is absent or broken.
+  // so detect it first even when ZeroClaw.json is absent or broken.
   const systemdToken = readSystemdGatewayToken();
   if (systemdToken) {
     result.token = systemdToken;
   }
 
-  if (!existsSync(OPENCLAW_CONFIG)) {
+  if (!existsSync(ZeroClaw_CONFIG)) {
+    for (const tomlPath of ZEROCLAW_TOML_CONFIG_PATHS) {
+      if (!existsSync(tomlPath)) continue;
+      try {
+        const raw = readFileSync(tomlPath, 'utf-8');
+        const gatewaySection = raw.match(/\[gateway\]([\s\S]*?)(?:\n\[[^\]]+\]|$)/i)?.[1] || '';
+        const portMatch = gatewaySection.match(/^port\s*=\s*(\d+)\s*$/m);
+        const hostMatch = gatewaySection.match(/^host\s*=\s*"([^"]+)"\s*$/m);
+        const port = portMatch?.[1] ? Number(portMatch[1]) : NaN;
+        if (Number.isFinite(port) && port > 0) {
+          const host = hostMatch?.[1]?.trim() || '127.0.0.1';
+          result.url = `http://${host}:${port}`;
+          return result;
+        }
+      } catch {
+        // keep searching
+      }
+    }
+
     return result;
   }
 
   try {
-    const raw = readFileSync(OPENCLAW_CONFIG, 'utf-8');
-    const config = JSON.parse(raw) as OpenClawConfig;
+    const raw = readFileSync(ZeroClaw_CONFIG, 'utf-8');
+    const config = JSON.parse(raw) as ZeroClawConfig;
 
     if (!result.token && config.gateway?.auth?.token) {
       result.token = config.gateway.auth.token;
@@ -87,14 +109,14 @@ export function detectGatewayConfig(): DetectedGateway {
  */
 function readSystemdGatewayToken(): string | null {
   const servicePaths = [
-    join(HOME, '.config', 'systemd', 'user', 'openclaw-gateway.service'),
-    '/etc/systemd/system/openclaw-gateway.service',
+    join(HOME, '.config', 'systemd', 'user', 'ZeroClaw-gateway.service'),
+    '/etc/systemd/system/ZeroClaw-gateway.service',
   ];
   for (const p of servicePaths) {
     if (!existsSync(p)) continue;
     try {
       const content = readFileSync(p, 'utf-8');
-      const match = content.match(/OPENCLAW_GATEWAY_TOKEN=(\S+)/);
+      const match = content.match(/ZeroClaw_GATEWAY_TOKEN=(\S+)/);
       if (match?.[1]) return match[1];
     } catch { /* skip */ }
   }
@@ -102,11 +124,11 @@ function readSystemdGatewayToken(): string | null {
 }
 
 /**
- * Check if the OPENCLAW_GATEWAY_TOKEN environment variable is already set.
- * This is the standard env var that OpenClaw itself uses.
+ * Check if the ZeroClaw_GATEWAY_TOKEN environment variable is already set.
+ * This is the standard env var that ZeroClaw itself uses.
  */
 export function getEnvGatewayToken(): string | null {
-  return process.env.OPENCLAW_GATEWAY_TOKEN || null;
+  return process.env.ZeroClaw_GATEWAY_TOKEN || null;
 }
 
 export function chooseSetupGatewayToken(opts: {
@@ -133,21 +155,21 @@ export interface GatewayPatchResult {
 }
 
 /**
- * Patch the OpenClaw gateway config to allow external origins.
+ * Patch the ZeroClaw gateway config to allow external origins.
  * Adds the given origin to gateway.controlUi.allowedOrigins (deduped).
  * Returns a result indicating success/failure.
  */
 export function patchGatewayAllowedOrigins(origin: string): GatewayPatchResult {
-  const result: GatewayPatchResult = { ok: false, message: '', configPath: OPENCLAW_CONFIG };
+  const result: GatewayPatchResult = { ok: false, message: '', configPath: ZeroClaw_CONFIG };
 
-  if (!existsSync(OPENCLAW_CONFIG)) {
-    result.message = `Config not found: ${OPENCLAW_CONFIG}`;
+  if (!existsSync(ZeroClaw_CONFIG)) {
+    result.message = `Config not found: ${ZeroClaw_CONFIG}`;
     return result;
   }
 
   try {
-    const raw = readFileSync(OPENCLAW_CONFIG, 'utf-8');
-    const config = JSON.parse(raw) as OpenClawConfig;
+    const raw = readFileSync(ZeroClaw_CONFIG, 'utf-8');
+    const config = JSON.parse(raw) as ZeroClawConfig;
 
     config.gateway = config.gateway || {};
     config.gateway.controlUi = config.gateway.controlUi || {};
@@ -162,7 +184,7 @@ export function patchGatewayAllowedOrigins(origin: string): GatewayPatchResult {
     origins.push(origin);
     config.gateway.controlUi.allowedOrigins = origins;
 
-    writeFileSync(OPENCLAW_CONFIG, JSON.stringify(config, null, 2) + '\n');
+    writeFileSync(ZeroClaw_CONFIG, JSON.stringify(config, null, 2) + '\n');
     result.ok = true;
     result.message = `Added ${origin} to gateway.controlUi.allowedOrigins`;
     return result;
@@ -175,28 +197,28 @@ export function patchGatewayAllowedOrigins(origin: string): GatewayPatchResult {
 const REQUIRED_HTTP_TOOLS = ['cron', 'gateway', 'sessions_spawn'] as const;
 
 // Must match the connect metadata sent by Nerve's browser WS client
-// (src/hooks/useWebSocket.ts) to avoid OpenClaw 2026.2.26+ metadata-repair prompts.
+// (src/hooks/useWebSocket.ts) to avoid ZeroClaw 2026.2.26+ metadata-repair prompts.
 const NERVE_PAIRED_PLATFORM = 'web';
-const NERVE_PAIRED_CLIENT_ID = 'webchat-ui';
+const NERVE_PAIRED_CLIENT_ID = 'nerve-zero';
 const NERVE_PAIRED_CLIENT_MODE = 'webchat';
-const NERVE_PAIRED_DISPLAY_NAME = 'Nerve UI';
+const NERVE_PAIRED_DISPLAY_NAME = 'nerve-zero';
 
 /**
- * Patch the OpenClaw gateway config to allow required HTTP tools.
+ * Patch the ZeroClaw gateway config to allow required HTTP tools.
  * Adds missing entries in `gateway.tools.allow` (deduped).
  * Returns a result indicating success/failure.
  */
 export function patchGatewayToolsAllow(): GatewayPatchResult {
-  const result: GatewayPatchResult = { ok: false, message: '', configPath: OPENCLAW_CONFIG };
+  const result: GatewayPatchResult = { ok: false, message: '', configPath: ZeroClaw_CONFIG };
 
-  if (!existsSync(OPENCLAW_CONFIG)) {
-    result.message = `Config not found: ${OPENCLAW_CONFIG}`;
+  if (!existsSync(ZeroClaw_CONFIG)) {
+    result.message = `Config not found: ${ZeroClaw_CONFIG}`;
     return result;
   }
 
   try {
-    const raw = readFileSync(OPENCLAW_CONFIG, 'utf-8');
-    const config = JSON.parse(raw) as OpenClawConfig;
+    const raw = readFileSync(ZeroClaw_CONFIG, 'utf-8');
+    const config = JSON.parse(raw) as ZeroClawConfig;
 
     config.gateway = config.gateway || {};
     config.gateway.tools = config.gateway.tools || {};
@@ -211,7 +233,7 @@ export function patchGatewayToolsAllow(): GatewayPatchResult {
 
     config.gateway.tools.allow = [...allow, ...missing];
 
-    writeFileSync(OPENCLAW_CONFIG, JSON.stringify(config, null, 2) + '\n');
+    writeFileSync(ZeroClaw_CONFIG, JSON.stringify(config, null, 2) + '\n');
     result.ok = true;
     result.message = `Added ${missing.join(', ')} to gateway.tools.allow`;
     return result;
@@ -252,7 +274,7 @@ function hasFullOperatorScopes(scopes?: string[]): boolean {
 }
 
 function readGatewayDeviceId(): string | null {
-  const deviceJsonPath = join(HOME, '.openclaw', 'identity', 'device.json');
+  const deviceJsonPath = join(HOME, '.ZeroClaw', 'identity', 'device.json');
   if (!existsSync(deviceJsonPath)) return null;
 
   try {
@@ -302,7 +324,7 @@ function matchesPendingDeviceRequest(item: PendingDeviceRequest, identity: Devic
 }
 
 function localIdentityNeedsScopeFix(targetDeviceId: string): boolean {
-  const identityPath = join(HOME, '.openclaw', 'identity', 'device-auth.json');
+  const identityPath = join(HOME, '.ZeroClaw', 'identity', 'device-auth.json');
   if (!existsSync(identityPath)) return false;
 
   try {
@@ -345,9 +367,9 @@ function repairPairedDeviceScopes(device: {
  * with full operator scopes + a device-auth.json for the CLI.
  */
 function bootstrapPairedJson(): { ok: boolean; message: string; needsRestart: boolean } {
-  const deviceJsonPath = join(HOME, '.openclaw', 'identity', 'device.json');
-  const pairedPath = join(HOME, '.openclaw', 'devices', 'paired.json');
-  const deviceAuthPath = join(HOME, '.openclaw', 'identity', 'device-auth.json');
+  const deviceJsonPath = join(HOME, '.ZeroClaw', 'identity', 'device.json');
+  const pairedPath = join(HOME, '.ZeroClaw', 'devices', 'paired.json');
+  const deviceAuthPath = join(HOME, '.ZeroClaw', 'identity', 'device-auth.json');
 
   if (!existsSync(deviceJsonPath)) {
     return { ok: false, message: 'No gateway device identity found', needsRestart: false };
@@ -392,7 +414,7 @@ function bootstrapPairedJson(): { ok: boolean; message: string; needsRestart: bo
       },
     };
 
-    const devicesDir = join(HOME, '.openclaw', 'devices');
+    const devicesDir = join(HOME, '.ZeroClaw', 'devices');
     if (!existsSync(devicesDir)) {
       mkdirSync(devicesDir, { recursive: true, mode: 0o700 });
     }
@@ -424,7 +446,7 @@ function bootstrapPairedJson(): { ok: boolean; message: string; needsRestart: bo
 }
 
 /**
- * Workaround for OpenClaw 2026.2.19 bootstrap bug.
+ * Workaround for ZeroClaw 2026.2.19 bootstrap bug.
  *
  * On fresh install, the gateway creates its own device identity with only
  * `operator.read` scope. But the CLI needs `operator.admin` + `operator.approvals`
@@ -437,7 +459,7 @@ function bootstrapPairedJson(): { ok: boolean; message: string; needsRestart: bo
 export function fixGatewayDeviceScopes(opts: {
   targetDeviceId?: string;
 } = {}): { ok: boolean; message: string; needsRestart: boolean } {
-  const pairedPath = join(HOME, '.openclaw', 'devices', 'paired.json');
+  const pairedPath = join(HOME, '.ZeroClaw', 'devices', 'paired.json');
 
   if (!existsSync(pairedPath)) {
     // Fresh install — no paired.json yet. Bootstrap by creating it with the
@@ -472,7 +494,7 @@ export function fixGatewayDeviceScopes(opts: {
     // and triggers a scope-upgrade request that requires approval scopes to
     // approve, creating another deadlock.
     let identityChanged = false;
-    const identityPath = join(HOME, '.openclaw', 'identity', 'device-auth.json');
+    const identityPath = join(HOME, '.ZeroClaw', 'identity', 'device-auth.json');
     if (existsSync(identityPath)) {
       try {
         const idRaw = readFileSync(identityPath, 'utf-8');
@@ -524,12 +546,12 @@ export function approvePendingNerveDevice(deps: {
     return {
       ok: false,
       approved: 0,
-      message: 'Could not identify Nerve device identity, approve manually with `openclaw devices list`',
+      message: 'Could not identify Nerve device identity, approve manually with `ZeroClaw devices list`',
     };
   }
 
   try {
-    const listOutput = run('openclaw devices list --json 2>/dev/null', {
+    const listOutput = run('ZeroClaw devices list --json 2>/dev/null', {
       timeout: 10000,
       stdio: ['pipe', 'pipe', 'pipe'],
     }).toString();
@@ -541,7 +563,7 @@ export function approvePendingNerveDevice(deps: {
         return {
           ok: false,
           approved: 0,
-          message: 'Could not safely inspect pending requests, approve Nerve manually with `openclaw devices list`',
+          message: 'Could not safely inspect pending requests, approve Nerve manually with `ZeroClaw devices list`',
         };
       }
       pendingItems = parsed.pending;
@@ -549,7 +571,7 @@ export function approvePendingNerveDevice(deps: {
       return {
         ok: false,
         approved: 0,
-        message: 'Could not safely inspect pending requests, approve Nerve manually with `openclaw devices list`',
+        message: 'Could not safely inspect pending requests, approve Nerve manually with `ZeroClaw devices list`',
       };
     }
 
@@ -566,7 +588,7 @@ export function approvePendingNerveDevice(deps: {
       return {
         ok: false,
         approved: 0,
-        message: 'Could not safely identify the Nerve request, approve manually with `openclaw devices list`',
+        message: 'Could not safely identify the Nerve request, approve manually with `ZeroClaw devices list`',
       };
     }
 
@@ -574,14 +596,14 @@ export function approvePendingNerveDevice(deps: {
       return {
         ok: false,
         approved: 0,
-        message: 'Could not safely identify a single Nerve request, approve manually with `openclaw devices list`',
+        message: 'Could not safely identify a single Nerve request, approve manually with `ZeroClaw devices list`',
       };
     }
 
-    run(`openclaw devices approve ${matches[0].requestId}`, { timeout: 10000, stdio: 'pipe' });
+    run(`ZeroClaw devices approve ${matches[0].requestId}`, { timeout: 10000, stdio: 'pipe' });
     return { ok: true, approved: 1, message: 'Approved Nerve pending device request' };
   } catch {
-    return { ok: false, approved: 0, message: 'Could not inspect pending requests safely, approve Nerve manually with `openclaw devices list`' };
+    return { ok: false, approved: 0, message: 'Could not inspect pending requests safely, approve Nerve manually with `ZeroClaw devices list`' };
   }
 }
 
@@ -591,13 +613,13 @@ export function approvePendingNerveDevice(deps: {
  * Generates the Nerve device identity (Ed25519 keypair) if it doesn't exist,
  * then registers it directly in paired.json with full operator scopes.
  * This means Nerve can connect to the gateway immediately on first start
- * without any manual `openclaw devices approve` step.
+ * without any manual `ZeroClaw devices approve` step.
  */
 export function prePairNerveDevice(gatewayToken?: string): { ok: boolean; message: string; needsRestart: boolean } {
   const nerveDir = process.env.NERVE_DATA_DIR
     || join(process.env.HOME || HOME, '.nerve');
   const identityPath = join(nerveDir, 'device-identity.json');
-  const pairedPath = join(HOME, '.openclaw', 'devices', 'paired.json');
+  const pairedPath = join(HOME, '.ZeroClaw', 'devices', 'paired.json');
 
   if (!existsSync(pairedPath)) {
     // fixGatewayDeviceScopes should have created this — but handle gracefully
@@ -687,7 +709,7 @@ export function prePairNerveDevice(gatewayToken?: string): { ok: boolean; messag
         changedFields.push('scopes');
       }
 
-      // OpenClaw 2026.2.26+ pins platform/device metadata on paired devices.
+      // ZeroClaw 2026.2.26+ pins platform/device metadata on paired devices.
       // These must match the browser connect metadata Nerve sends.
       if (existing.platform !== NERVE_PAIRED_PLATFORM) {
         existing.platform = NERVE_PAIRED_PLATFORM;
@@ -768,11 +790,11 @@ export interface ConfigChange {
  * Detect whether gateway-side operator scopes need repair/bootstrap.
  */
 function needsDeviceScopeFix(): boolean {
-  const pairedPath = join(HOME, '.openclaw', 'devices', 'paired.json');
+  const pairedPath = join(HOME, '.ZeroClaw', 'devices', 'paired.json');
 
   if (!existsSync(pairedPath)) {
     // Fresh install — needs bootstrap if the gateway identity exists
-    const deviceJsonPath = join(HOME, '.openclaw', 'identity', 'device.json');
+    const deviceJsonPath = join(HOME, '.ZeroClaw', 'identity', 'device.json');
     return existsSync(deviceJsonPath);
   }
 
@@ -804,7 +826,7 @@ function needsDeviceScopeFix(): boolean {
 function needsPrePair(gatewayToken?: string): boolean {
   const nerveDir = process.env.NERVE_DATA_DIR || join(process.env.HOME || HOME, '.nerve');
   const identityPath = join(nerveDir, 'device-identity.json');
-  const pairedPath = join(HOME, '.openclaw', 'devices', 'paired.json');
+  const pairedPath = join(HOME, '.ZeroClaw', 'devices', 'paired.json');
 
   if (!existsSync(pairedPath)) return false;
 
@@ -834,7 +856,7 @@ function needsPrePair(gatewayToken?: string): boolean {
     if (!hasFullOperatorScopes(existing.scopes)) return true;
     if (!hasFullOperatorScopes(existing.tokens?.operator?.scopes)) return true;
 
-    // OpenClaw 2026.2.26+ metadata pinning requires these to match runtime connect metadata.
+    // ZeroClaw 2026.2.26+ metadata pinning requires these to match runtime connect metadata.
     if (existing.platform !== NERVE_PAIRED_PLATFORM) return true;
     if (existing.clientId !== NERVE_PAIRED_CLIENT_ID) return true;
     if (existing.clientMode !== NERVE_PAIRED_CLIENT_MODE) return true;
@@ -850,11 +872,11 @@ function needsPrePair(gatewayToken?: string): boolean {
  * Detect whether gateway.tools.allow is missing required HTTP tools.
  */
 function needsToolsAllow(): boolean {
-  if (!existsSync(OPENCLAW_CONFIG)) return false;
+  if (!existsSync(ZeroClaw_CONFIG)) return false;
 
   try {
-    const raw = readFileSync(OPENCLAW_CONFIG, 'utf-8');
-    const config = JSON.parse(raw) as OpenClawConfig;
+    const raw = readFileSync(ZeroClaw_CONFIG, 'utf-8');
+    const config = JSON.parse(raw) as ZeroClawConfig;
     const allow = Array.isArray(config.gateway?.tools?.allow) ? config.gateway.tools.allow : [];
     return REQUIRED_HTTP_TOOLS.some(tool => !allow.includes(tool));
   } catch {
@@ -866,11 +888,11 @@ function needsToolsAllow(): boolean {
  * Detect whether a specific origin is missing from gateway.controlUi.allowedOrigins.
  */
 function needsOriginPatch(origin: string): boolean {
-  if (!existsSync(OPENCLAW_CONFIG)) return false;
+  if (!existsSync(ZeroClaw_CONFIG)) return false;
 
   try {
-    const raw = readFileSync(OPENCLAW_CONFIG, 'utf-8');
-    const config = JSON.parse(raw) as OpenClawConfig;
+    const raw = readFileSync(ZeroClaw_CONFIG, 'utf-8');
+    const config = JSON.parse(raw) as ZeroClawConfig;
     const origins = config.gateway?.controlUi?.allowedOrigins || [];
     return !origins.includes(origin);
   } catch {
@@ -889,7 +911,7 @@ export function detectNeededConfigChanges(opts: {
   gatewayToken?: string;
 }): ConfigChange[] {
   const changes: ConfigChange[] = [];
-  const pairedPath = join(HOME, '.openclaw', 'devices', 'paired.json');
+  const pairedPath = join(HOME, '.ZeroClaw', 'devices', 'paired.json');
 
   const deviceScopeFixNeeded = needsDeviceScopeFix();
 
@@ -952,16 +974,16 @@ export function detectNeededConfigChanges(opts: {
 }
 
 /**
- * Attempt to restart the OpenClaw gateway so config changes take effect.
- * Tries `openclaw gateway restart` first, falls back to kill + start.
+ * Attempt to restart the ZeroClaw gateway so config changes take effect.
+ * Tries `ZeroClaw gateway restart` first, falls back to kill + start.
  */
 export function restartGateway(): { ok: boolean; message: string } {
   try {
-    execSync('openclaw gateway restart', { timeout: 15000, stdio: 'pipe' });
+    execSync('ZeroClaw gateway restart', { timeout: 15000, stdio: 'pipe' });
     return { ok: true, message: 'Gateway restarted' };
   } catch {
     try {
-      execSync('pkill -f "openclaw gateway" || true', { timeout: 5000, stdio: 'pipe' });
+      execSync('pkill -f "ZeroClaw gateway" || true', { timeout: 5000, stdio: 'pipe' });
       return { ok: true, message: 'Gateway process killed (should auto-restart if supervised)' };
     } catch {
       return { ok: false, message: 'Could not restart gateway — restart it manually' };

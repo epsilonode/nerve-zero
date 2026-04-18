@@ -8,7 +8,6 @@ import { describeToolUse } from '@/utils/helpers';
 import { buildSessionTree } from '@/features/sessions/sessionTree';
 import {
   buildAgentRootSessionKey,
-  extractIdentityName,
   getAgentRegistrationName,
   getRootAgentSessionKey,
   getSessionDisplayLabel,
@@ -72,9 +71,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [eventEntries, setEventEntries] = useState<EventEntry[]>([]);
   const [agentStatus, setAgentStatus] = useState<Record<string, GranularAgentState>>({});
   const [agentName, setAgentName] = useState('Agent');
-  const [defaultAgentWorkspaceRoot, setDefaultAgentWorkspaceRoot] = useState<string | null>(null);
-  const [rootIdentityNames, setRootIdentityNames] = useState<Record<string, string>>({});
-  const [rootIdentityMisses, setRootIdentityMisses] = useState<Record<string, true>>({});
   const [unreadSessionKeys, setUnreadSessionKeys] = useState<Set<string>>(new Set());
   const unreadSessionKeysRef = useRef(unreadSessionKeys);
   const soundEnabledRef = useRef(soundEnabled);
@@ -158,15 +154,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       try {
         const res = await fetch('/api/server-info', { signal: controller.signal });
         if (!res.ok) return;
-        const data = await res.json() as { agentName?: string; defaultAgentWorkspaceRoot?: string | null };
+        const data = await res.json();
         if (data.agentName) {
           setAgentName(data.agentName);
         }
-        setDefaultAgentWorkspaceRoot(
-          typeof data.defaultAgentWorkspaceRoot === 'string' && data.defaultAgentWorkspaceRoot.trim()
-            ? data.defaultAgentWorkspaceRoot
-            : null,
-        );
       } catch (err) {
         if (err instanceof Error && err.name !== 'AbortError') {
           // silent fail - use default
@@ -179,90 +170,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   
   // Update refs in effect to avoid render-time mutations
   useEffect(() => {
-    const rootAgentIds = Array.from(new Set(
-      sessions
-        .map((session) => getSessionKey(session))
-        .filter(isTopLevelAgentSessionKey)
-        .map((sessionKey) => getRootAgentId(sessionKey))
-        .filter((rootId): rootId is string => Boolean(rootId) && rootId !== 'main'),
-    )).filter((rootId) => !rootIdentityNames[rootId] && !rootIdentityMisses[rootId]);
-
-    if (rootAgentIds.length === 0) return;
-
-    const controller = new AbortController();
-    void Promise.all(rootAgentIds.map(async (rootId) => {
-      try {
-        const params = new URLSearchParams({ agentId: rootId });
-        const res = await fetch(`/api/workspace/identity?${params.toString()}`, { signal: controller.signal });
-        if (!res.ok) return null;
-        const data = await res.json() as { ok?: boolean; content?: string };
-        const identityName = typeof data.content === 'string' ? extractIdentityName(data.content) : null;
-        if (identityName) return { rootId, identityName, kind: 'hit' as const };
-        return { rootId, kind: 'miss' as const };
-      } catch (err) {
-        if (err instanceof Error && err.name === 'AbortError') return null;
-        return null;
-      }
-    })).then((results) => {
-      if (controller.signal.aborted) return;
-      const resolved = results.filter((result): result is NonNullable<typeof result> => Boolean(result));
-      if (resolved.length === 0) return;
-
-      setRootIdentityMisses((prev) => {
-        let changed = false;
-        const next = { ...prev };
-        for (const result of resolved) {
-          if (result.kind === 'hit') {
-            if (!next[result.rootId]) continue;
-            delete next[result.rootId];
-            changed = true;
-            continue;
-          }
-          if (next[result.rootId]) continue;
-          next[result.rootId] = true;
-          changed = true;
-        }
-        return changed ? next : prev;
-      });
-
-      setRootIdentityNames((prev) => {
-        const next = { ...prev };
-        let changed = false;
-        for (const result of resolved) {
-          if (result.kind !== 'hit') continue;
-          const { rootId, identityName } = result;
-          if (next[rootId] === identityName) continue;
-          next[rootId] = identityName;
-          changed = true;
-        }
-        return changed ? next : prev;
-      });
-    });
-
-    return () => controller.abort();
-  }, [rootIdentityMisses, rootIdentityNames, sessions]);
-
-  const displaySessions = useMemo(() => sessions.map((session) => {
-    const sessionKey = getSessionKey(session);
-    if (!isTopLevelAgentSessionKey(sessionKey)) return session;
-
-    const rootId = getRootAgentId(sessionKey);
-    if (!rootId) return session;
-
-    const identityName = rootId === 'main' ? agentName : rootIdentityNames[rootId];
-    if (rootId !== 'main' && !identityName) {
-      if (!session.identityName) return session;
-      const rest = { ...session };
-      delete rest.identityName;
-      return rest;
-    }
-    if (!identityName || session.identityName === identityName) return session;
-    return { ...session, identityName };
-  }), [agentName, rootIdentityNames, sessions]);
-
-  useEffect(() => {
-    sessionsRef.current = displaySessions;
-  }, [displaySessions]);
+    sessionsRef.current = sessions;
+  }, [sessions]);
   
   const currentSessionRef = useRef(currentSession);
   useEffect(() => {
@@ -864,16 +773,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // Register agent in config (ignore if already registered)
       const agentId = getRootAgentId(sessionKey);
       const registrationName = getAgentRegistrationName(rootName, sessionKey);
-      const workspacePath = defaultAgentWorkspaceRoot
-        ? `${defaultAgentWorkspaceRoot.replace(/\/+$/, '')}/${agentId}`
-        : `~/.openclaw/workspace-${agentId}`;
       try {
-        await rpc('agents.create', { name: registrationName, workspace: workspacePath });
+        await rpc('agents.create', { name: registrationName, workspace: `~/.ZeroClaw/workspace-${agentId}` });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (!msg.includes('already exists')) throw err;
       }
-      const thinkingLevel = opts.thinking ?? null;
+      const thinkingLevel = opts.thinking && opts.thinking !== 'off' ? opts.thinking : null;
 
       await rpc('sessions.patch', {
         key: sessionKey,
@@ -923,7 +829,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
     await refreshSessions();
     setCurrentSession(data.sessionKey);
-  }, [defaultAgentWorkspaceRoot, listAuthoritativeSessions, rpc, refreshSessions, setCurrentSession]);
+  }, [listAuthoritativeSessions, rpc, refreshSessions, setCurrentSession]);
 
   const renameSession = useCallback(async (sessionKey: string, label: string) => {
     await rpc('sessions.patch', { key: sessionKey, label });
@@ -939,7 +845,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, [rpc]);
 
   const value = useMemo<SessionContextValue>(() => ({
-    sessions: displaySessions,
+    sessions,
     sessionsLoading,
     currentSession,
     setCurrentSession,
@@ -957,7 +863,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     eventEntries,
     agentName,
   }), [
-    displaySessions, sessionsLoading, currentSession, setCurrentSession, busyState, agentStatus,
+    sessions, sessionsLoading, currentSession, setCurrentSession, busyState, agentStatus,
     unreadSessions, markSessionRead,
     abortSession, refreshSessions, deleteSession, spawnSession, renameSession,
     updateSessionFromEvent, agentLogEntries, eventEntries, agentName,

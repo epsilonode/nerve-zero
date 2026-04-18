@@ -15,9 +15,9 @@ const httpsConfig = httpsEnabled
   ? { key: readFileSync(keyPath), cert: readFileSync(certPath) }
   : undefined
 
-// Port is configurable via VITE_PORT env var (default: 3080)
-const port = parseInt(process.env.VITE_PORT || '3080', 10)
-const apiTarget = `http://localhost:${process.env.PORT || '3081'}`
+// Port is configurable via VITE_PORT env var (default: 3081 for dev)
+const port = parseInt(process.env.VITE_PORT || '3081', 10)
+const apiTarget = `http://localhost:${process.env.PORT || '3080'}`
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],

@@ -2,8 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { resolveAgentWorkspace } from './agent-workspace.js';
-import { getWorkspaceRoot, resolveWorkspacePath, resolveWorkspacePathForRoot } from './file-utils.js';
+import { getWorkspaceRoot, resolveWorkspacePath } from './file-utils.js';
 
 export type CanonicalUploadReferenceKind = 'direct_workspace_reference' | 'imported_workspace_reference';
 
@@ -94,9 +93,8 @@ async function buildCanonicalReference(params: {
   absolutePath: string;
   originalName: string;
   mimeType?: string;
-  workspaceRoot?: string;
 }): Promise<CanonicalUploadReference> {
-  const workspaceRoot = path.resolve(getWorkspaceRoot(params.workspaceRoot));
+  const workspaceRoot = path.resolve(getWorkspaceRoot());
   const realAbsolutePath = await fs.realpath(params.absolutePath);
 
   if (!isWithinDir(realAbsolutePath, workspaceRoot)) {
@@ -119,11 +117,8 @@ async function buildCanonicalReference(params: {
   };
 }
 
-export async function resolveDirectWorkspaceReference(relativePath: string, agentId?: string): Promise<CanonicalUploadReference> {
-  const workspaceRoot = agentId ? resolveAgentWorkspace(agentId).workspaceRoot : undefined;
-  const resolved = workspaceRoot
-    ? await resolveWorkspacePathForRoot(workspaceRoot, relativePath)
-    : await resolveWorkspacePath(relativePath);
+export async function resolveDirectWorkspaceReference(relativePath: string): Promise<CanonicalUploadReference> {
+  const resolved = await resolveWorkspacePath(relativePath);
   if (!resolved) {
     throw new Error('Invalid or excluded workspace path.');
   }
@@ -132,7 +127,6 @@ export async function resolveDirectWorkspaceReference(relativePath: string, agen
     kind: 'direct_workspace_reference',
     absolutePath: resolved,
     originalName: path.basename(resolved),
-    workspaceRoot,
   });
 }
 

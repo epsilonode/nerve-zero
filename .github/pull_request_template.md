@@ -20,9 +20,9 @@
 
 ## Checklist
 
-- [ ] `npm run lint` passes
-- [ ] `npm run build && npm run build:server` succeeds
-- [ ] `npm test -- --run` passes
+- [ ] `bun run lint` passes
+- [ ] `bun run build && bun run build:server` succeeds
+- [ ] `bun test -- --run` passes
 - [ ] New features include tests
 - [ ] UI changes include a screenshot or screen recording
 

@@ -3,7 +3,7 @@
  *
  * Detects three patterns:
  *  1. Markdown images: ![alt](url)
- *  2. MEDIA: markers: MEDIA: /path/to/image.png (OpenClaw convention)
+ *  2. MEDIA: markers: MEDIA: /path/to/image.png (ZeroClaw convention)
  *  3. Raw URLs ending in image extensions on their own line
  *
  * Returns cleaned text (markers stripped) and an array of extracted images.

@@ -1,10 +1,10 @@
 /**
  * Gateway API Routes
  *
- * GET  /api/gateway/models       — Returns configured models from the active OpenClaw config.
+ * GET  /api/gateway/models       — Returns configured models from the active ZeroClaw config.
  * GET  /api/gateway/session-info — Returns the current session's runtime info (model, thinking level).
  * POST /api/gateway/session-patch — Change model/effort for a session via HTTP (reliable fallback).
- * POST /api/gateway/restart      — Restart the OpenClaw gateway service via `openclaw gateway restart`.
+ * POST /api/gateway/restart      — Restart the ZeroClaw gateway service via `ZeroClaw gateway restart`.
  *
  * Response (models):       { models: Array<{ id: string; label: string; provider: string; configured: true; role: string }>, error: string | null, source: 'config' }
  * Response (session-info): { model?: string; thinking?: string }
@@ -15,15 +15,16 @@
 import { Hono } from 'hono';
 import JSON5 from 'json5';
 import { execFile } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { Socket } from 'node:net';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 import { invokeGatewayTool } from '../lib/gateway-client.js';
 import { rateLimitGeneral, rateLimitRestart } from '../middleware/rate-limit.js';
-import { resolveOpenclawBin } from '../lib/openclaw-bin.js';
+import { resolveZeroclawBin } from '../lib/zeroclaw-bin.js';
 import { config } from '../lib/config.js';
+import { extractDefaultModel, extractDefaultThinking, readZeroClawConfigSource } from '../lib/zeroclaw-config.js';
 
 const app = new Hono();
 
@@ -49,37 +50,75 @@ interface GatewaySessionSummary {
   thinkingLevel?: string;
 }
 
-// ─── Model catalog via active OpenClaw config ──────────────────────────────────
+const gatewayPairSchema = z.object({
+  url: z.string().url(),
+  pairCode: z.string().min(1).max(200),
+});
 
-const openclawBin = resolveOpenclawBin();
+function toGatewayHttpBase(url: string): string {
+  const parsed = new URL(url);
+  if (parsed.protocol === 'ws:') parsed.protocol = 'http:';
+  if (parsed.protocol === 'wss:') parsed.protocol = 'https:';
+  if (parsed.pathname.endsWith('/ws/chat')) {
+    parsed.pathname = parsed.pathname.slice(0, -'/ws/chat'.length) || '/';
+  } else if (parsed.pathname.endsWith('/ws')) {
+    parsed.pathname = parsed.pathname.slice(0, -'/ws'.length) || '/';
+  }
+  parsed.search = '';
+  parsed.hash = '';
+  return parsed.toString().replace(/\/$/, '');
+}
+
+function extractPairToken(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const record = payload as Record<string, unknown>;
+  const candidates = [
+    record.token,
+    record.bearerToken,
+    record.accessToken,
+    record.access_token,
+    (record.data as Record<string, unknown> | undefined)?.token,
+    (record.data as Record<string, unknown> | undefined)?.bearerToken,
+    (record.data as Record<string, unknown> | undefined)?.accessToken,
+    (record.data as Record<string, unknown> | undefined)?.access_token,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+  }
+  return null;
+}
+
+// ─── Model catalog via active ZeroClaw config ──────────────────────────────────
+
+const ZeroClawBin = resolveZeroclawBin();
 
 /** Directory containing the node binary — needed in PATH for `#!/usr/bin/env node` shims. */
 const nodeBinDir = process.execPath.replace(/\/node$/, '');
 
-const CONFIG_READ_ERROR = 'Could not read OpenClaw config.';
-const NO_CONFIGURED_MODELS_ERROR = 'No models configured in OpenClaw config.';
+const CONFIG_READ_ERROR = 'Could not read ZeroClaw config.';
+const NO_CONFIGURED_MODELS_ERROR = 'No models configured in ZeroClaw config.';
 
-interface OpenClawModelConfigEntry {
+interface ZeroClawModelConfigEntry {
   alias?: string;
 }
 
-interface OpenClawConfig {
+interface ZeroClawConfig {
   agents?: {
     defaults?: {
       model?: {
         primary?: string;
         fallbacks?: string[];
       };
-      models?: Record<string, OpenClawModelConfigEntry | undefined>;
+      models?: Record<string, ZeroClawModelConfigEntry | undefined>;
     };
   };
 }
 
 /**
- * Infer the HOME directory for openclaw execution.
- * When server runs as root but openclaw is installed under a user account
- * (e.g., /home/username/.nvm/...), we need to use that user's HOME so openclaw
- * can find its config at ~/.openclaw/openclaw.json.
+ * Infer the HOME directory for ZeroClaw execution.
+ * When server runs as root but ZeroClaw is installed under a user account
+ * (e.g., /home/username/.nvm/...), we need to use that user's HOME so ZeroClaw
+ * can find its config at ~/.ZeroClaw/ZeroClaw.json.
  *
  * Extracts home from paths like:
  *   /home/username/.nvm/... → /home/username
@@ -87,20 +126,20 @@ interface OpenClawConfig {
  *
  * Falls back to process.env.HOME if extraction fails.
  */
-function inferOpenclawHome(): string {
-  const match = openclawBin.match(/^(\/home\/[^/]+|\/Users\/[^/]+)/);
+function inferZeroClawHome(): string {
+  const match = ZeroClawBin.match(/^(\/home\/[^/]+|\/Users\/[^/]+)/);
   if (match) return match[1];
 
   return process.env.HOME || homedir();
 }
 
-const openclawHome = inferOpenclawHome();
+const ZeroClawHome = inferZeroClawHome();
 
-function resolveOpenClawConfigPath(): string {
-  return process.env.OPENCLAW_CONFIG_PATH?.trim() || path.join(openclawHome, '.openclaw', 'openclaw.json');
+function resolveZeroClawConfigPath(): string {
+  return process.env.ZeroClaw_CONFIG_PATH?.trim() || path.join(ZeroClawHome, '.ZeroClaw', 'ZeroClaw.json');
 }
 
-function normalizeAlias(entry: OpenClawModelConfigEntry | undefined): string | undefined {
+function normalizeAlias(entry: ZeroClawModelConfigEntry | undefined): string | undefined {
   const alias = entry?.alias;
   return typeof alias === 'string' && alias.trim() ? alias.trim() : undefined;
 }
@@ -108,7 +147,7 @@ function normalizeAlias(entry: OpenClawModelConfigEntry | undefined): string | u
 function buildGatewayModelInfo(
   id: string,
   role: GatewayModelInfo['role'],
-  entry: OpenClawModelConfigEntry | undefined,
+  entry: ZeroClawModelConfigEntry | undefined,
 ): GatewayModelInfo {
   const alias = normalizeAlias(entry);
   const [provider, ...rest] = id.split('/');
@@ -123,7 +162,7 @@ function buildGatewayModelInfo(
   };
 }
 
-function readConfiguredModels(configData: OpenClawConfig): GatewayModelInfo[] {
+function readConfiguredModels(configData: ZeroClawConfig): GatewayModelInfo[] {
   const defaults = configData.agents?.defaults;
   const modelDefaults = defaults?.model;
   const allowlist = defaults?.models || {};
@@ -156,12 +195,14 @@ function readConfiguredModels(configData: OpenClawConfig): GatewayModelInfo[] {
 }
 
 async function getModelCatalog(): Promise<{ models: GatewayModelInfo[]; error: string | null }> {
-  const configPath = resolveOpenClawConfigPath();
-
   try {
-    const raw = await readFile(configPath, 'utf8');
-    const configData = JSON5.parse(raw) as OpenClawConfig;
-    const models = readConfiguredModels(configData);
+    const source = await readZeroClawConfigSource();
+    const models = source.path.toLowerCase().endsWith('.toml')
+      ? (() => {
+          const primary = extractDefaultModel(source.raw);
+          return primary ? [buildGatewayModelInfo(primary, 'primary', undefined)] : [];
+        })()
+      : readConfiguredModels(JSON5.parse(source.raw) as ZeroClawConfig);
 
     if (models.length === 0) {
       return { models: [], error: NO_CONFIGURED_MODELS_ERROR };
@@ -169,7 +210,7 @@ async function getModelCatalog(): Promise<{ models: GatewayModelInfo[]; error: s
 
     return { models, error: null };
   } catch (err) {
-    console.warn('[gateway/models] failed to read configured models from config:', configPath, (err as Error).message);
+    console.warn('[gateway/models] failed to read configured models from config:', (err as Error).message);
     return { models: [], error: CONFIG_READ_ERROR };
   }
 }
@@ -177,6 +218,59 @@ async function getModelCatalog(): Promise<{ models: GatewayModelInfo[]; error: s
 app.get('/api/gateway/models', rateLimitGeneral, async (c) => {
   const { models, error } = await getModelCatalog();
   return c.json({ models, error, source: 'config' });
+});
+
+app.post('/api/gateway/pair', rateLimitGeneral, async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ ok: false, error: 'Invalid JSON body' }, 400);
+  }
+
+  const parsed = gatewayPairSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ ok: false, error: 'Invalid pairing request' }, 400);
+  }
+
+  const gatewayBaseUrl = toGatewayHttpBase(parsed.data.url);
+
+  try {
+    const response = await fetch(`${gatewayBaseUrl}/pair`, {
+      method: 'POST',
+      headers: {
+        'X-Pairing-Code': parsed.data.pairCode.trim(),
+      },
+      signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS),
+    });
+
+    let payload: unknown = null;
+    const text = await response.text();
+    if (text.trim()) {
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        payload = { message: text.trim() };
+      }
+    }
+
+    if (!response.ok) {
+      const errorMessage = (payload && typeof payload === 'object' && 'error' in payload && typeof (payload as Record<string, unknown>).error === 'string')
+        ? (payload as Record<string, unknown>).error as string
+        : `Gateway pairing failed with HTTP ${response.status}`;
+      return c.json({ ok: false, error: errorMessage }, { status: response.status as 400 | 401 | 403 | 404 | 429 | 500 | 502 | 503 | 504 });
+    }
+
+    const token = extractPairToken(payload);
+    if (!token) {
+      return c.json({ ok: false, error: 'Gateway pair succeeded but no token was returned' }, 502);
+    }
+
+    return c.json({ ok: true, token });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ ok: false, error: `Gateway pairing request failed: ${message}` }, 502);
+  }
 });
 
 /**
@@ -259,7 +353,20 @@ app.get('/api/gateway/session-info', rateLimitGeneral, async (c) => {
   const requestedSessionKey = c.req.query('sessionKey')?.trim() || '';
   const info: { model?: string; thinking?: string } = {};
 
-  // Primary: fetch per-session data from sessions.list (source of truth for per-session state)
+  try {
+    const source = await readZeroClawConfigSource();
+    if (source.path.toLowerCase().endsWith('.toml')) {
+      const model = extractDefaultModel(source.raw);
+      const thinking = extractDefaultThinking(source.raw);
+      if (model) info.model = model;
+      if (thinking) info.thinking = thinking.toLowerCase();
+      if (!requestedSessionKey || (info.model || info.thinking)) return c.json(info);
+    }
+  } catch (err) {
+    console.warn('[gateway/session-info] config fallback failed:', (err as Error).message);
+  }
+
+  // Legacy fallback for older gateway builds that still expose sessions_list.
   try {
     const result = await invokeGatewayTool(
       'sessions_list',
@@ -316,6 +423,29 @@ const sessionPatchSchema = z.object({
 
 type SessionPatchBody = z.infer<typeof sessionPatchSchema>;
 
+function upsertTomlScalar(raw: string, section: string | null, key: string, value: string): string {
+  const assignment = `${key} = ${JSON.stringify(value)}`;
+  if (!section) {
+    const re = new RegExp(`^${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*=.*$`, 'm');
+    if (re.test(raw)) return raw.replace(re, assignment);
+    return `${assignment}\n${raw}`;
+  }
+
+  const escapedSection = section.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const blockRe = new RegExp(`^\\[${escapedSection}\\]\\s*$[\\s\\S]*?(?=^\\[[^\n]+\\]\\s*$|\\Z)`, 'im');
+  const existingBlock = raw.match(blockRe)?.[0];
+  if (existingBlock) {
+    const keyRe = new RegExp(`^${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*=.*$`, 'm');
+    const nextBlock = keyRe.test(existingBlock)
+      ? existingBlock.replace(keyRe, assignment)
+      : `${existingBlock.trimEnd()}\n${assignment}`;
+    return raw.replace(blockRe, nextBlock);
+  }
+
+  const suffix = raw.endsWith('\n') ? '' : '\n';
+  return `${raw}${suffix}\n[${section}]\n${assignment}\n`;
+}
+
 /**
  * POST /api/gateway/session-patch
  *
@@ -341,6 +471,29 @@ app.post('/api/gateway/session-patch', rateLimitGeneral, async (c) => {
 
   let sessionKey = body.sessionKey?.trim() || '';
   const result: { ok: boolean; model?: string; thinking?: string; error?: string } = { ok: true };
+
+  try {
+    const source = await readZeroClawConfigSource();
+    if (source.path.toLowerCase().endsWith('.toml')) {
+      let nextRaw = source.raw;
+      if (body.model) {
+        nextRaw = upsertTomlScalar(nextRaw, null, 'default_model', body.model);
+        result.model = body.model;
+      }
+      if (body.thinkingLevel !== undefined) {
+        nextRaw = upsertTomlScalar(nextRaw, 'agent.thinking', 'default_level', body.thinkingLevel ?? 'off');
+        result.thinking = body.thinkingLevel ?? 'off';
+      }
+      if (nextRaw !== source.raw) {
+        await writeFile(source.path, nextRaw, 'utf8');
+      }
+      if (result.model || result.thinking) {
+        return c.json(result);
+      }
+    }
+  } catch (err) {
+    console.warn('[gateway/session-patch] config-backed patch failed:', (err as Error).message);
+  }
 
   if (!sessionKey) {
     try {
@@ -421,7 +574,7 @@ app.post('/api/gateway/restart', rateLimitRestart, async (c) => {
 
   const execEnv = {
     ...process.env,
-    HOME: openclawHome,
+    HOME: ZeroClawHome,
     PATH: `${nodeBinDir}:${process.env.PATH || '/usr/bin:/bin'}`,
     XDG_RUNTIME_DIR: xdgRuntime,
     DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS || `unix:path=${xdgRuntime}/bus`,
@@ -429,7 +582,7 @@ app.post('/api/gateway/restart', rateLimitRestart, async (c) => {
 
   // Step 1: restart the gateway
   const restartResult = await new Promise<{ ok: boolean; output: string }>((resolve) => {
-    execFile(openclawBin, ['gateway', 'restart'], {
+    execFile(ZeroClawBin, ['gateway', 'restart'], {
       timeout: GATEWAY_RESTART_TIMEOUT_MS,
       maxBuffer: 512 * 1024,
       env: execEnv,
@@ -460,7 +613,7 @@ app.post('/api/gateway/restart', rateLimitRestart, async (c) => {
     
     // First check if systemd reports it as running
     statusResult = await new Promise<{ ok: boolean; output: string }>((resolve) => {
-      execFile(openclawBin, ['gateway', 'status'], {
+      execFile(ZeroClawBin, ['gateway', 'status'], {
         timeout: 5000,
         maxBuffer: 512 * 1024,
         env: execEnv,

@@ -6,12 +6,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   buildKanbanFallbackRunKey,
-  launchKanbanFallbackSubagentViaRpc,
+  launchKanbanAssignedSubagent,
   resolveKanbanFallbackParentSessionKey,
 } from './kanban-subagent-fallback.js';
 import * as gatewayRpc from './gateway-rpc.js';
 
-describe('launchKanbanFallbackSubagentViaRpc', () => {
+describe('launchKanbanAssignedSubagent', () => {
   let calls: Array<{ method: string; params: Record<string, unknown> }>;
 
   beforeEach(() => {
@@ -41,7 +41,7 @@ describe('launchKanbanFallbackSubagentViaRpc', () => {
   });
 
   it('creates a real child session before sending the task', async () => {
-    await launchKanbanFallbackSubagentViaRpc({
+    await launchKanbanAssignedSubagent({
       label: 'test-kanban-run',
       task: 'Execute kanban task',
       parentSessionKey: 'agent:reviewer:main',
@@ -53,7 +53,7 @@ describe('launchKanbanFallbackSubagentViaRpc', () => {
   });
 
   it('fails when the parent session is not a top-level root', async () => {
-    await expect(launchKanbanFallbackSubagentViaRpc({
+    await expect(launchKanbanAssignedSubagent({
       label: 'test-kanban-run',
       task: 'Execute kanban task',
       parentSessionKey: 'agent:reviewer:subagent:existing-child',
@@ -71,7 +71,7 @@ describe('launchKanbanFallbackSubagentViaRpc', () => {
       return {};
     });
 
-    await expect(launchKanbanFallbackSubagentViaRpc({
+    await expect(launchKanbanAssignedSubagent({
       label: 'test-kanban-run',
       task: 'Execute kanban task',
       parentSessionKey: 'agent:reviewer:main',
@@ -81,7 +81,7 @@ describe('launchKanbanFallbackSubagentViaRpc', () => {
   });
 
   it('creates the worker session under the requested parent root', async () => {
-    await launchKanbanFallbackSubagentViaRpc({
+    await launchKanbanAssignedSubagent({
       label: 'test-kanban-run',
       task: 'Execute kanban task',
       parentSessionKey: 'agent:reviewer:main',
@@ -94,7 +94,7 @@ describe('launchKanbanFallbackSubagentViaRpc', () => {
   });
 
   it('sends the raw task to the created child session with model/thinking preserved', async () => {
-    await launchKanbanFallbackSubagentViaRpc({
+    await launchKanbanAssignedSubagent({
       label: 'test-kanban-run',
       task: 'Execute kanban task',
       parentSessionKey: 'agent:reviewer:main',
@@ -131,7 +131,7 @@ describe('launchKanbanFallbackSubagentViaRpc', () => {
       return {};
     });
 
-    await expect(launchKanbanFallbackSubagentViaRpc({
+    await expect(launchKanbanAssignedSubagent({
       label: 'test-kanban-run',
       task: 'Execute kanban task',
       parentSessionKey: 'agent:reviewer:main',
@@ -148,7 +148,7 @@ describe('launchKanbanFallbackSubagentViaRpc', () => {
   });
 
   it('returns the deterministic run correlation key, child session key, and runId', async () => {
-    const result = await launchKanbanFallbackSubagentViaRpc({
+    const result = await launchKanbanAssignedSubagent({
       label: 'test-kanban-run',
       task: 'Execute kanban task',
       parentSessionKey: 'agent:reviewer:main',
@@ -161,7 +161,7 @@ describe('launchKanbanFallbackSubagentViaRpc', () => {
   });
 
   it('returns a compatibility snapshot containing the parent key', async () => {
-    const result = await launchKanbanFallbackSubagentViaRpc({
+    const result = await launchKanbanAssignedSubagent({
       label: 'test-kanban-run',
       task: 'Execute kanban task',
       parentSessionKey: 'agent:reviewer:main',
@@ -171,7 +171,7 @@ describe('launchKanbanFallbackSubagentViaRpc', () => {
   });
 
   it('generates an idempotency key for sessions.send', async () => {
-    await launchKanbanFallbackSubagentViaRpc({
+    await launchKanbanAssignedSubagent({
       label: 'test-kanban-run',
       task: 'Execute kanban task',
       parentSessionKey: 'agent:reviewer:main',

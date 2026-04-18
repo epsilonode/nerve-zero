@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback, useImperativeHandle, forwardRef, useMemo } from 'react';
-import { Mic, Paperclip, X, Loader2, ArrowUp, FileText, FolderOpen, Command } from 'lucide-react';
+import { Mic, Paperclip, X, Loader2, ArrowUp, FileText, FolderOpen } from 'lucide-react';
 import type { TreeEntry } from '@/features/file-browser';
 import { useVoiceInput } from '@/features/voice/useVoiceInput';
 import { useTabCompletion } from '@/hooks/useTabCompletion';
@@ -40,16 +40,12 @@ interface InputBarProps {
   onWakeWordState?: (enabled: boolean, toggle: () => void) => void;
   /** Agent name for dynamic wake phrase (e.g., "Hey Helena") */
   agentName?: string;
-  /** Whether to show the compact command-palette launcher inside the composer. */
-  showCommandPaletteButton?: boolean;
-  /** Open the command palette from the compact composer launcher. */
-  onOpenCommandPalette?: () => void;
 }
 
 export interface InputBarHandle {
   focus: () => void;
   injectText: (text: string, mode?: 'replace' | 'append') => void;
-  addWorkspacePath: (path: string, kind: 'file' | 'directory', agentId?: string) => Promise<void>;
+  addWorkspacePath: (path: string, kind: 'file' | 'directory') => Promise<void>;
 }
 
 interface StagedAttachment {
@@ -245,14 +241,11 @@ async function importBrowserUploadsToCanonicalReferences(files: File[]): Promise
   return payload.items;
 }
 
-async function resolveWorkspacePathToCanonicalReference(
-  targetPath: string,
-  agentId?: string,
-): Promise<CanonicalUploadReference> {
+async function resolveWorkspacePathToCanonicalReference(targetPath: string): Promise<CanonicalUploadReference> {
   const response = await fetch('/api/upload-reference/resolve', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path: targetPath, ...(agentId ? { agentId } : {}) }),
+    body: JSON.stringify({ path: targetPath }),
   });
 
   const payload = await response.json().catch(() => null) as UploadReferenceResolveResponse | null;
@@ -265,14 +258,7 @@ async function resolveWorkspacePathToCanonicalReference(
 }
 
 /** Chat input bar with file attachments, voice input, and model effort selector. */
-export const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar({
-  onSend,
-  isGenerating,
-  onWakeWordState,
-  agentName = 'Agent',
-  showCommandPaletteButton = false,
-  onOpenCommandPalette,
-}, ref) {
+export const InputBar = forwardRef<InputBarHandle, InputBarProps>(function InputBar({ onSend, isGenerating, onWakeWordState, agentName = 'Agent' }, ref) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const deferredResizeFrameRef = useRef<number | null>(null);
@@ -694,7 +680,7 @@ export const InputBar = forwardRef<InputBarHandle, InputBarProps>(function Input
     });
   }, []);
 
-  const stageWorkspaceFileReference = useCallback(async (path: string, agentId?: string) => {
+  const stageWorkspaceFileReference = useCallback(async (path: string) => {
     if (!attachByPathEnabled) {
       setAttachmentError('Workspace path attachments are disabled by configuration.');
       return;
@@ -707,7 +693,7 @@ export const InputBar = forwardRef<InputBarHandle, InputBarProps>(function Input
     }
 
     setAttachmentError(null);
-    const reference = await resolveWorkspacePathToCanonicalReference(path, agentId);
+    const reference = await resolveWorkspacePathToCanonicalReference(path);
     const mimeType = reference.mimeType || inferMimeTypeFromName(reference.originalName || path);
     const syntheticFile = createServerPathBackedFile({
       name: reference.originalName,
@@ -734,7 +720,7 @@ export const InputBar = forwardRef<InputBarHandle, InputBarProps>(function Input
   useImperativeHandle(ref, () => ({
     focus: focusInput,
     injectText: injectComposerText,
-    addWorkspacePath: async (path: string, kind: 'file' | 'directory', agentId?: string) => {
+    addWorkspacePath: async (path: string, kind: 'file' | 'directory') => {
       if (kind === 'directory') {
         injectComposerText(formatWorkspacePathAddToChat({
           source: 'Workspace',
@@ -744,7 +730,7 @@ export const InputBar = forwardRef<InputBarHandle, InputBarProps>(function Input
         return;
       }
 
-      await stageWorkspaceFileReference(path, agentId);
+      await stageWorkspaceFileReference(path);
     },
   }), [focusInput, injectComposerText, stageWorkspaceFileReference]);
 
@@ -1113,36 +1099,29 @@ export const InputBar = forwardRef<InputBarHandle, InputBarProps>(function Input
       return;
     }
 
-    // Up arrow history behavior for single-line inputs:
-    // 1) caret not at start -> move caret to start
-    // 2) caret already at start -> load older history entry
-    // Multi-line input keeps native ArrowUp behavior.
+    // Up arrow — navigate to older history (only when cursor at start or input is empty)
     if (e.key === 'ArrowUp' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
       const input = inputRef.current;
       if (!input) return;
 
+      // Only trigger if cursor is at the beginning or input is single line
       const isAtStart = input.selectionStart === 0 && input.selectionEnd === 0;
       const isSingleLine = !input.value.includes('\n');
 
-      if (!isSingleLine) return;
-
-      if (!isAtStart) {
-        e.preventDefault();
-        input.setSelectionRange(0, 0);
-        return;
-      }
-
-      const entry = inputHistory.navigateUp(input.value);
-      if (entry !== null) {
-        e.preventDefault();
-        input.value = entry;
-        setDraftText(entry);
-        input.style.height = 'auto';
-        input.style.height = Math.min(input.scrollHeight, 160) + 'px';
-        input.setSelectionRange(input.value.length, input.value.length);
+      if (isAtStart || isSingleLine) {
+        const entry = inputHistory.navigateUp(input.value);
+        if (entry !== null) {
+          e.preventDefault();
+          input.value = entry;
+          setDraftText(entry);
+          input.style.height = 'auto';
+          input.style.height = Math.min(input.scrollHeight, 160) + 'px';
+          input.setSelectionRange(input.value.length, input.value.length);
+        }
       }
       return;
     }
+
     // Down arrow — navigate to newer history or back to draft
     if (e.key === 'ArrowDown' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
       if (inputHistory.isNavigating()) {
@@ -1196,42 +1175,35 @@ export const InputBar = forwardRef<InputBarHandle, InputBarProps>(function Input
       {stagedAttachments.length > 0 && (
         <div className="flex flex-col gap-2 px-4 py-2 bg-card border-t border-border">
           <div className="flex gap-2 flex-wrap">
-            {stagedAttachments.map((item) => {
-              const relativePathBasename = item.relativePath?.split('/').filter(Boolean).pop();
-              const showRelativePath = item.origin === 'server_path'
-                && Boolean(item.relativePath)
-                && relativePathBasename !== item.file.name;
+            {stagedAttachments.map((item) => (
+              <div key={item.id} className="relative group border border-border rounded px-2 py-1.5 bg-background min-w-[190px] max-w-[260px]">
+                <button
+                  onClick={() => removeStagedAttachment(item.id)}
+                  className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-600 text-white rounded-full flex items-center justify-center text-[10px] opacity-80 hover:opacity-100 cursor-pointer"
+                >
+                  <X size={10} />
+                </button>
 
-              return (
-                <div key={item.id} className="relative group border border-border rounded px-2 py-1.5 bg-background min-w-[190px] max-w-[260px]">
-                  <button
-                    onClick={() => removeStagedAttachment(item.id)}
-                    className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-600 text-white rounded-full flex items-center justify-center text-[10px] opacity-80 hover:opacity-100 cursor-pointer"
-                  >
-                    <X size={10} />
-                  </button>
-
-                  <div className="flex items-center gap-2 pr-3">
-                    {item.previewUrl ? (
-                      <img src={item.previewUrl} alt={item.file.name} className="w-10 h-10 object-cover rounded border border-border" />
-                    ) : (
-                      <div className="w-10 h-10 rounded border border-border flex items-center justify-center bg-muted">
-                        <FileText size={14} className="text-muted-foreground" />
-                      </div>
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[11px] truncate">{item.file.name}</div>
-                      <div className="text-[10px] text-muted-foreground">{formatFileSize(item.file.size)}</div>
-                      {showRelativePath && (
-                        <div className="text-[9px] mt-0.5 truncate text-muted-foreground">{item.relativePath}</div>
-                      )}
-                      <div className="text-[9px] mt-0.5 text-primary/90 uppercase">{item.origin === 'server_path' ? 'Local File' : 'Upload'}</div>
+                <div className="flex items-center gap-2 pr-3">
+                  {item.previewUrl ? (
+                    <img src={item.previewUrl} alt={item.file.name} className="w-10 h-10 object-cover rounded border border-border" />
+                  ) : (
+                    <div className="w-10 h-10 rounded border border-border flex items-center justify-center bg-muted">
+                      <FileText size={14} className="text-muted-foreground" />
                     </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[11px] truncate">{item.file.name}</div>
+                    <div className="text-[10px] text-muted-foreground">{formatFileSize(item.file.size)}</div>
+                    {item.origin === 'server_path' && item.relativePath && (
+                      <div className="text-[9px] mt-0.5 truncate text-muted-foreground">{item.relativePath}</div>
+                    )}
+                    <div className="text-[9px] mt-0.5 text-primary/90 uppercase">{item.origin === 'server_path' ? 'Path Ref' : 'Upload'}</div>
                   </div>
-
                 </div>
-              );
-            })}
+
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -1248,23 +1220,23 @@ export const InputBar = forwardRef<InputBarHandle, InputBarProps>(function Input
       />
       {/* Input row */}
       <div
-        className={`flex items-start gap-0 border-t shrink-0 bg-card focus-within:border-t-primary/40 focus-within:shadow-[0_-1px_8px_rgba(232,168,56,0.1)] ${voiceState === 'recording' ? 'border-t-red-500 shadow-[0_-1px_12px_rgba(239,68,68,0.3)]' : 'border-border'}`}
+        className={`flex items-center gap-0 border-t shrink-0 bg-card focus-within:border-t-primary/40 focus-within:shadow-[0_-1px_8px_rgba(232,168,56,0.1)] ${voiceState === 'recording' ? 'border-t-red-500 shadow-[0_-1px_12px_rgba(239,68,68,0.3)]' : 'border-border'}`}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
         {voiceState === 'recording' ? (
-          <span className="self-start pl-3.5 pt-3 shrink-0 flex items-center gap-1.5">
+          <span className="pl-3.5 shrink-0 flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
             <Mic size={14} className="text-red-500" />
           </span>
         ) : voiceState === 'transcribing' ? (
-          <span className="self-start pl-3.5 pt-3 shrink-0 flex items-center gap-1.5">
+          <span className="pl-3.5 shrink-0 flex items-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
             <Mic size={14} className="text-primary" />
           </span>
         ) : (
-          <span className="self-start text-primary text-base leading-none font-bold pl-3.5 pt-3 shrink-0 animate-prompt-pulse">›</span>
+          <span className="text-primary text-base font-bold pl-3.5 shrink-0 animate-prompt-pulse">›</span>
         )}
         {/* Uncontrolled textarea — value is read/written via inputRef.
             This is intentional: useTabCompletion and history navigation
@@ -1280,17 +1252,6 @@ export const InputBar = forwardRef<InputBarHandle, InputBarProps>(function Input
           rows={1}
           className="flex-1 font-mono text-[13px] bg-transparent text-foreground border-none px-2.5 py-3 resize-none outline-none min-h-[42px] max-h-[160px]"
         />
-        {showCommandPaletteButton && onOpenCommandPalette && (
-          <button
-            type="button"
-            onClick={onOpenCommandPalette}
-            className="bg-transparent border-none text-muted-foreground hover:text-primary cursor-pointer px-2.5 self-stretch h-full flex items-center justify-center"
-            title="Open command palette"
-            aria-label="Open command palette"
-          >
-            <Command size={16} aria-hidden="true" />
-          </button>
-        )}
         <button
           type="button"
           onClick={openUploadFilesPicker}
@@ -1317,7 +1278,7 @@ export const InputBar = forwardRef<InputBarHandle, InputBarProps>(function Input
             ? 'Recording… Left Shift to send · Double Left Shift to discard'
             : voiceState === 'transcribing'
             ? 'Transcribing…'
-            : 'Enter or ⌘Enter to send · Shift+Enter for newline · Double Left Shift for voice · ⌘K command palette'}
+            : 'Enter or ⌘Enter to send · Shift+Enter for newline · Double Left Shift for voice · Ctrl+F search'}
         </span>
       </div>
       {voiceError && (

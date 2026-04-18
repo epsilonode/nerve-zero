@@ -12,7 +12,7 @@ import { logger } from 'hono/logger';
 import { cors } from 'hono/cors';
 import { compress } from 'hono/compress';
 import { bodyLimit } from 'hono/body-limit';
-import { serveStatic } from '@hono/node-server/serve-static';
+import { serveStatic } from './lib/serve-static.js';
 
 import { cacheHeaders } from './middleware/cache-headers.js';
 import { errorHandler } from './middleware/error-handler.js';
@@ -45,10 +45,9 @@ import skillsRoutes from './routes/skills.js';
 import filesRoutes from './routes/files.js';
 import voicePhrasesRoutes from './routes/voice-phrases.js';
 import fileBrowserRoutes from './routes/file-browser.js';
-import uploadConfigRoutes from './routes/upload-config.js';
 import uploadReferenceRoutes from './routes/upload-reference.js';
+import uploadConfigRoutes from './routes/upload-config.js';
 import kanbanRoutes from './routes/kanban.js';
-import beadsRoutes from './routes/beads.js';
 // activity routes removed — tab dropped from workspace panel
 
 const app = new Hono();
@@ -78,7 +77,7 @@ app.use(
 app.use('*', authMiddleware);
 // Apply compression to all routes except SSE (compression buffers chunks and breaks streaming)
 app.use('*', async (c, next) => {
-  if (c.req.path === '/api/events' || c.req.path === '/api/files/raw') return next();
+  if (c.req.path === '/api/events') return next();
   return compress()(c, next);
 });
 app.use('*', cacheHeaders);
@@ -91,7 +90,7 @@ const routes = [
   codexLimitsRoutes, claudeCodeLimitsRoutes, versionRoutes, versionCheckRoutes,
   gatewayRoutes, connectDefaultsRoutes,
   workspaceRoutes, cronsRoutes, sessionsRoutes, skillsRoutes, filesRoutes, apiKeysRoutes,
-  voicePhrasesRoutes, fileBrowserRoutes, uploadConfigRoutes, uploadReferenceRoutes, channelsRoutes, kanbanRoutes, beadsRoutes,
+  voicePhrasesRoutes, fileBrowserRoutes, uploadReferenceRoutes, uploadConfigRoutes, channelsRoutes, kanbanRoutes,
 ];
 for (const route of routes) app.route('/', route);
 

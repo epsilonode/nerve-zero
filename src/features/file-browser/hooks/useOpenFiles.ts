@@ -7,7 +7,7 @@ import {
   useMemo,
 } from 'react';
 import { getWorkspaceStorageKey } from '@/features/workspace/workspaceScope';
-import { isImageFile, isPdfFile } from '../utils/fileTypes';
+import { isImageFile } from '../utils/fileTypes';
 import type { OpenFile } from '../types';
 
 const DEFAULT_AGENT_ID = 'main';
@@ -364,27 +364,6 @@ export function useOpenFiles(agentId = DEFAULT_AGENT_ID) {
         files.push(createSnapshotBackedOpenFile(path, dirtySnapshot));
       };
 
-      // Skip /api/files/read for image and PDF files; restore them directly
-      const fileName = basename(path);
-      if (isImageFile(fileName) || isPdfFile(fileName)) {
-        const dirtySnapshot = getDirtySnapshot();
-        if (dirtySnapshot) {
-          files.push(createSnapshotBackedOpenFile(path, dirtySnapshot));
-        } else {
-          files.push({
-            path,
-            name: fileName,
-            content: '',
-            savedContent: '',
-            dirty: false,
-            locked: false,
-            mtime: 0,
-            loading: false,
-          });
-        }
-        continue;
-      }
-
       try {
         const res = await fetch(buildReadUrl(path, targetAgentId));
         if (!isLatestReadRequest(scopedPathKey, token)) {
@@ -536,7 +515,7 @@ export function useOpenFiles(agentId = DEFAULT_AGENT_ID) {
     });
     setActiveTab(filePath);
 
-    if (isImageFile(basename(filePath)) || isPdfFile(basename(filePath))) {
+    if (isImageFile(basename(filePath))) {
       setOpenFiles((prev) => prev.map((file) => (
         file.path === filePath ? { ...file, loading: false } : file
       )));
@@ -755,24 +734,10 @@ export function useOpenFiles(agentId = DEFAULT_AGENT_ID) {
     const isOpen = openFilesRef.current.some((file) => file.path === changedPath);
     if (!isOpen) return;
 
-    const fileName = basename(changedPath);
-    const isRawAsset = isImageFile(fileName) || isPdfFile(fileName);
-
     setOpenFiles((prev) => prev.map((file) => (
       file.path === changedPath ? { ...file, locked: true } : file
     )));
 
-    // For raw assets (images, PDFs), bump viewerVersion to trigger iframe remount
-    if (isRawAsset) {
-      setOpenFiles((prev) => prev.map((file) => (
-        file.path === changedPath 
-          ? { ...file, viewerVersion: (file.viewerVersion ?? 0) + 1, locked: false }
-          : file
-      )));
-      return;
-    }
-
-    // For text files, reload content from disk
     void reloadFile(changedPath).then(() => {
       if (agentIdRef.current !== requestAgentId) return;
 

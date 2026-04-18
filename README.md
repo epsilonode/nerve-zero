@@ -4,19 +4,23 @@
 
 # Nerve
 
-**The cockpit OpenClaw deserves.**
+**The cockpit ZeroClaw deserves.**
 
-*OpenClaw is powerful. Nerve is the interface that makes people say “oh, now I get it."*
+*ZeroClaw is powerful. Nerve is the interface that makes people say "oh, now I get it."*
 
 
-[![Star Nerve on GitHub](https://img.shields.io/github/stars/daggerhashimoto/openclaw-nerve?style=for-the-badge&logo=github&label=Star%20Nerve%20on%20GitHub&color=0f172a)](https://github.com/daggerhashimoto/openclaw-nerve)
+[![Star Nerve on GitHub](https://img.shields.io/github/stars/epsilonode/nerve-zero?style=for-the-badge&logo=github&label=Star%20Nerve%20on%20GitHub&color=0f172a)](https://github.com/epsilonode/nerve-zero)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)](LICENSE)
 [![Discord](https://img.shields.io/discord/1474924531683688478?style=for-the-badge&color=5865F2&logo=discord&logoColor=white&label=Discord)](https://discord.gg/Sh9ZGtctva)
 
 </div>
 
+> **Fork notice:** This is `epsilonode/nerve-zero`, a fork of [`daggerhashimoto/openclaw-nerve`](https://github.com/daggerhashimoto/openclaw-nerve).
+> Fork changes: runtime migrated from Node.js to Bun, backend updated from OpenClaw to ZeroClaw, and **Windows support added**.
+> Full credit and thanks to [@daggerhashimoto](https://github.com/daggerhashimoto) and all contributors to the original project.
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/daggerhashimoto/openclaw-nerve/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/epsilonode/nerve-zero/master/install.sh | bash
 ```
 > *Run the installer, live in 60 seconds*
 
@@ -91,13 +95,21 @@ Charts, diffs, previews, syntax-highlighted code, structured tool rendering, and
 | **Operations** | Session tree, subagents, cron scheduling, kanban task board, review flow, proposal inbox, model overrides |
 | **Observability** | Token usage, cost tracking, context meter, agent logs, event logs |
 | **Polish** | Command palette, responsive UI, 14 themes, font family and 10px to 24px font size controls, mobile-safe input sizing, hot-reloadable settings, updater with rollback |
+| **Platform** | macOS, Linux, and **Windows** (via Git Bash or native) |
 ## Get started
 
 ### One command
 
+**macOS / Linux:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/daggerhashimoto/openclaw-nerve/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/epsilonode/nerve-zero/master/install.sh | bash
 ```
+
+**Windows (Git Bash):**
+```bash
+curl -fsSL https://raw.githubusercontent.com/epsilonode/nerve-zero/master/install.sh | bash
+```
+> *Requires [Git for Windows](https://git-scm.com/download/win) (which includes Git Bash) and [Bun](https://bun.sh).*
 
 > *The installer handles dependencies, clone, build, and then usually hands off straight into the setup wizard. Guided access modes include localhost, LAN, Tailscale tailnet IP, and Tailscale Serve.*
 
@@ -111,11 +123,32 @@ curl -fsSL https://raw.githubusercontent.com/daggerhashimoto/openclaw-nerve/mast
 <details><summary><strong>Manual install</strong></summary>
 
 ```bash
-git clone https://github.com/daggerhashimoto/openclaw-nerve.git
-cd openclaw-nerve
-npm install
-npm run setup
-npm run prod
+git clone https://github.com/epsilonode/nerve-zero.git
+cd nerve-zero
+bun install
+bun run setup
+bun start
+```
+
+</details>
+
+<details><summary><strong>Windows (manual)</strong></summary>
+
+Requires [Git for Windows](https://git-scm.com/download/win) and [Bun](https://bun.sh).
+
+```powershell
+git clone https://github.com/epsilonode/nerve-zero.git
+cd nerve-zero
+bun install
+bun run setup
+bun start
+```
+
+To run as a background service, use [NSSM](https://nssm.cc):
+```powershell
+nssm install nerve bun server-dist/index.js
+nssm set nerve AppDirectory C:\path\to\nerve-zero
+nssm start nerve
 ```
 
 </details>
@@ -126,7 +159,7 @@ npm run prod
 
 
 ```bash
-npm run update -- --yes
+bun run update -- --yes
 ```
 
 Fetches the latest release, rebuilds, restarts, verifies health, and rolls back automatically on failure.
@@ -136,32 +169,34 @@ Fetches the latest release, rebuilds, restarts, verifies health, and rolls back 
 <details><summary><strong>Development</strong></summary>
 
 ```bash
-npm run dev # frontend — Vite on :3080 by default
-PORT=3081 npm run dev:server # backend — explicit split-port dev setup
+bun run dev # frontend — Vite on :3080 by default
+PORT=3081 bun run dev:server # backend — explicit split-port dev setup
 ```
 
-`npm run dev:server` uses the normal server `PORT` setting. If you do not override it, the backend also defaults to `:3080` and will collide with Vite.
+`bun run dev:server` uses the normal server `PORT` setting. If you do not override it, the backend also defaults to `:3080` and will collide with Vite.
 
-**Requires:** Node.js 22+ and an OpenClaw gateway.
+`bun start` is the normal local boot path. If `dist/` is missing, it builds once and then starts the Bun server.
+
+**Requires:** Bun 1.0+ and a ZeroClaw gateway.
 </details>
 
 
-## How it fits into OpenClaw
+## How it fits into ZeroClaw
 
 Nerve sits in front of the gateway and gives you a richer operating surface in the browser.
 
 ```text
-Browser ─── Nerve (:3080) ─── OpenClaw Gateway (:18789)
+Browser ─── Nerve (:3080) ─── ZeroClaw Gateway (:18789)
  │           │
  ├─ WS ──────┤ proxied to gateway
  ├─ SSE ─────┤ file watchers, real-time sync
  └─ REST ────┘ files, memories, TTS, models
 ```
 
-OpenClaw remains the engine. Nerve gives it a cockpit.
+ZeroClaw remains the engine. Nerve gives it a cockpit.
 
 **Frontend:** React 19 · Tailwind CSS 4 · shadcn/ui · Vite 7 
-**Backend:** Hono 4 on Node.js
+**Backend:** Hono 4 on Bun
 
 ## Security
 
@@ -184,14 +219,16 @@ For the full threat model and hardening details, see **[docs/SECURITY.md](docs/S
 
 ## Community
 
-If this is the kind of interface you want around your OpenClaw setup, give the repo a star, contribute and keep an eye on it.
+If this is the kind of interface you want around your ZeroClaw setup, give the repo a star, contribute and keep an eye on it.
 
 Join the **[Nerve Discord](https://discord.gg/Sh9ZGtctva)** to get help, discuss, share your setup, and follow development.
 
 ### People building Nerve
 
-[![Contributors](https://contrib.rocks/image?repo=daggerhashimoto/openclaw-nerve)](https://github.com/daggerhashimoto/openclaw-nerve/graphs/contributors)
+[![Contributors](https://contrib.rocks/image?repo=epsilonode/nerve-zero)](https://github.com/epsilonode/nerve-zero/graphs/contributors)
 
 ## License
 
 [MIT](LICENSE)
+
+This project is a fork of [daggerhashimoto/openclaw-nerve](https://github.com/daggerhashimoto/openclaw-nerve), used under the MIT License. Original work Copyright (c) daggerhashimoto and contributors.

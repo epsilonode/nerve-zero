@@ -14,7 +14,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { resolveKanbanAssigneeRootSessionKey } from './kanban-assignee.js';
-import { gatewayRpcCall } from './gateway-rpc.js';
+import { deleteZeroClawSession, spawnZeroClawSession } from './zeroclaw-sessions.js';
 
 export interface KanbanFallbackLaunchResult {
   /** Deterministic correlation key stored on the task run link. */
@@ -62,7 +62,7 @@ function buildChildSessionKey(parentSessionKey: string): string {
  * Launch a Kanban task as a real child session under an existing top-level
  * agent root.
  */
-export async function launchKanbanFallbackSubagentViaRpc(params: {
+export async function launchKanbanAssignedSubagent(params: {
   label: string;
   task: string;
   parentSessionKey: string;
@@ -72,33 +72,17 @@ export async function launchKanbanFallbackSubagentViaRpc(params: {
   const sessionKey = buildKanbanFallbackRunKey(params.label);
   const childSessionKey = buildChildSessionKey(params.parentSessionKey);
 
-  const createResponse = await gatewayRpcCall('sessions.create', {
-    key: childSessionKey,
-    parentSessionKey: params.parentSessionKey,
-    label: params.label,
-    ...(params.model ? { model: params.model } : {}),
-  }) as { key?: string; sessionKey?: string };
-
-  const resolvedChildSessionKey = typeof createResponse.key === 'string' && createResponse.key.trim()
-    ? createResponse.key
-    : typeof createResponse.sessionKey === 'string' && createResponse.sessionKey.trim()
-      ? createResponse.sessionKey
-      : childSessionKey;
-
-  let sendResponse: { runId?: string };
+  let sendResponse: { sessionKey: string; runId?: string };
   try {
-    sendResponse = await gatewayRpcCall('sessions.send', {
-      key: resolvedChildSessionKey,
-      message: params.task,
-      ...(params.thinking ? { thinking: params.thinking } : {}),
-      idempotencyKey: `kanban-subagent-${Date.now()}-${randomUUID().slice(0, 8)}`,
-    }) as { runId?: string };
+    sendResponse = await spawnZeroClawSession({
+      task: params.task,
+      label: params.label,
+      model: params.model,
+      thinking: params.thinking,
+    });
   } catch (error) {
     try {
-      await gatewayRpcCall('sessions.delete', {
-        key: resolvedChildSessionKey,
-        deleteTranscript: true,
-      });
+      await deleteZeroClawSession(childSessionKey);
     } catch {
       // Best-effort cleanup only; preserve the original launch failure.
     }
@@ -108,7 +92,7 @@ export async function launchKanbanFallbackSubagentViaRpc(params: {
   return {
     sessionKey,
     parentSessionKey: params.parentSessionKey,
-    childSessionKey: resolvedChildSessionKey,
+    childSessionKey: sendResponse.sessionKey,
     knownSessionKeysBefore: [params.parentSessionKey],
     runId: sendResponse.runId,
   };

@@ -79,7 +79,7 @@ describe('file-utils', () => {
       const { getWorkspaceRoot } = await import('./file-utils.js');
       const result = getWorkspaceRoot();
       // Should return parent of default memory path
-      expect(result).toContain('.openclaw');
+      expect(result).toContain('.ZeroClaw');
       expect(result).toContain('workspace');
     });
 
@@ -90,7 +90,7 @@ describe('file-utils', () => {
       const { getWorkspaceRoot } = await import('./file-utils.js');
       const result = getWorkspaceRoot();
       // Should return parent of default memory path
-      expect(result).toContain('.openclaw');
+      expect(result).toContain('.ZeroClaw');
       expect(result).toContain('workspace');
     });
   });

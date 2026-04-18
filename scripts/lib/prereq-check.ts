@@ -1,5 +1,5 @@
 /**
- * Prerequisite checker — verifies Node.js version, npm, ffmpeg, openssl.
+ * Prerequisite checker — verifies Bun, ffmpeg, openssl, and Tailscale.
  */
 
 import { execSync } from 'node:child_process';
@@ -7,9 +7,8 @@ import { success, warn, fail } from './banner.js';
 import { getTailscaleState, type TailscaleState } from './tailscale.js';
 
 export interface PrereqResult {
-  nodeOk: boolean;
-  nodeVersion: string;
-  npmOk: boolean;
+  bunOk: boolean;
+  bunVersion: string;
   ffmpegOk: boolean;
   opensslOk: boolean;
   tailscaleOk: boolean;
@@ -23,19 +22,13 @@ export function checkPrerequisites(opts?: { quiet?: boolean }): PrereqResult {
 
   if (!quiet) console.log('  Checking prerequisites...');
 
-  const nodeVersion = process.version;
-  const nodeMajor = parseInt(nodeVersion.slice(1), 10);
-  const nodeOk = nodeMajor >= 22;
+  const bunVersion = process.versions.bun || '';
+  const bunMajor = parseInt(bunVersion.split('.')[0] || '0', 10);
+  const bunOk = bunMajor >= 1;
 
   if (!quiet) {
-    if (nodeOk) success(`Node.js ${nodeVersion} (≥22 required)`);
-    else fail(`Node.js ${nodeVersion} — version 22 or later is required`);
-  }
-
-  const npmOk = commandExists('npm');
-  if (!quiet) {
-    if (npmOk) success('npm available');
-    else fail('npm not found');
+    if (bunOk) success(`Bun ${bunVersion} (>=1 required)`);
+    else fail(`Bun ${bunVersion || 'not detected'} — version 1 or later is required`);
   }
 
   const ffmpegOk = commandExists('ffmpeg');
@@ -59,7 +52,7 @@ export function checkPrerequisites(opts?: { quiet?: boolean }): PrereqResult {
     else warn('Tailscale installed but not connected');
   }
 
-  return { nodeOk, nodeVersion, npmOk, ffmpegOk, opensslOk, tailscaleOk, tailscaleIp, tailscale };
+  return { bunOk, bunVersion, ffmpegOk, opensslOk, tailscaleOk, tailscaleIp, tailscale };
 }
 
 /** Check if a command exists on the system. */

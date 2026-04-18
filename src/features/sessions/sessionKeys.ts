@@ -130,28 +130,20 @@ export function getTopLevelAgentSessions(sessions: Session[]): Session[] {
     });
 }
 
-export function extractIdentityName(content: string): string | null {
-  const normalized = content.replace(/\*\*/g, '');
-  const match = normalized.match(/^\s*(?:[-*]\s*)?Name\s*:\s*(.+?)\s*$/im);
-  return match?.[1]?.trim() || null;
-}
-
 export function getSessionDisplayLabel(session: Session, agentName = 'Agent'): string {
   const sessionKey = getSessionKey(session);
-  const rootId = getRootAgentId(sessionKey);
-  const identityName = session.identityName?.trim();
 
   if (sessionKey === 'agent:main:main') {
     return `${agentName} (main)`;
   }
 
-  if (isTopLevelAgentSessionKey(sessionKey)) {
-    if (identityName && rootId) return `${identityName} (${rootId})`;
-    if (rootId) return rootId;
-  }
-
   if (session.label?.trim()) return session.label.trim();
   if (session.displayName?.trim()) return session.displayName.trim();
+
+  if (isTopLevelAgentSessionKey(sessionKey)) {
+    const rootId = getRootAgentId(sessionKey);
+    if (rootId) return `Agent ${rootId}`;
+  }
 
   if (isCronSessionKey(sessionKey)) {
     return `Cron ${sessionKey.split(':')[3]?.slice(0, 8) || ''}`.trim();

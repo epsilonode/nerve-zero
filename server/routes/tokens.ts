@@ -88,7 +88,7 @@ async function scanSessionCosts(): Promise<SessionCostData> {
 
             if (entry.type !== 'message') continue;
             const msg = entry.message;
-            if (!msg?.usage || !msg.provider || msg.provider === 'openclaw') continue;
+            if (!msg?.usage || !msg.provider || msg.provider === 'ZeroClaw') continue;
 
             const { usage, provider = 'unknown' } = msg;
             const cost = usage.cost?.total || 0;

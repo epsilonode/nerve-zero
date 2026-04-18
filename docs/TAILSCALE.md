@@ -14,7 +14,7 @@ If you are starting from scratch, use the normal installer/setup flow first, the
 Make sure all of this is already true:
 
 - Nerve starts locally and `curl http://127.0.0.1:3080/health` works
-- OpenClaw gateway is healthy and `openclaw gateway status` works
+- ZeroClaw gateway is healthy and `ZeroClaw gateway status` works
 - Tailscale is installed on the Nerve machine
 - Tailscale is logged in on the Nerve machine and on the client device you want to use
 - You know where your Nerve install lives, default is usually `~/nerve`
@@ -24,7 +24,7 @@ Back up your current config first:
 ```bash
 cd ~/nerve
 cp .env .env.before-tailscale.bak
-cp ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.before-tailscale.bak
+cp ~/.ZeroClaw/ZeroClaw.json ~/.ZeroClaw/ZeroClaw.json.before-tailscale.bak
 ```
 
 ## Which mode should you use?
@@ -77,12 +77,12 @@ Notes:
 
 ### 3. Patch the gateway allowlist
 
-Add the same origin to `~/.openclaw/openclaw.json`:
+Add the same origin to `~/.ZeroClaw/ZeroClaw.json`:
 
 ```bash
 ORIGIN="http://<tailscale-ip>:3080" node - <<'NODE'
 const fs = require('fs');
-const path = `${process.env.HOME}/.openclaw/openclaw.json`;
+const path = `${process.env.HOME}/.ZeroClaw/ZeroClaw.json`;
 const origin = process.env.ORIGIN;
 const cfg = JSON.parse(fs.readFileSync(path, 'utf8'));
 
@@ -100,7 +100,7 @@ NODE
 
 ```bash
 sudo systemctl restart nerve.service
-openclaw gateway restart
+ZeroClaw gateway restart
 ```
 
 ### 5. Validate
@@ -109,7 +109,7 @@ On the Nerve machine:
 
 ```bash
 curl -fsS http://127.0.0.1:3080/health
-openclaw gateway status
+ZeroClaw gateway status
 ```
 
 From another Tailscale-connected device, open:
@@ -133,7 +133,7 @@ This keeps Nerve on localhost and lets Tailscale publish a private HTTPS URL.
 On the Nerve machine:
 
 ```bash
-tailscale serve --bg http://127.0.0.1:3080
+tailscale serve --bg 443 http://127.0.0.1:3080
 ```
 
 ### 2. Find the Serve URL
@@ -192,12 +192,12 @@ Notes:
 
 ### 4. Patch the gateway allowlist
 
-Add the same Serve origin to `~/.openclaw/openclaw.json`:
+Add the same Serve origin to `~/.ZeroClaw/ZeroClaw.json`:
 
 ```bash
 ORIGIN="<serve-origin>" node - <<'NODE'
 const fs = require('fs');
-const path = `${process.env.HOME}/.openclaw/openclaw.json`;
+const path = `${process.env.HOME}/.ZeroClaw/ZeroClaw.json`;
 const origin = process.env.ORIGIN;
 const cfg = JSON.parse(fs.readFileSync(path, 'utf8'));
 
@@ -215,7 +215,7 @@ NODE
 
 ```bash
 sudo systemctl restart nerve.service
-openclaw gateway restart
+ZeroClaw gateway restart
 ```
 
 ### 6. Validate
@@ -224,7 +224,7 @@ On the Nerve machine:
 
 ```bash
 curl -fsS http://127.0.0.1:3080/health
-openclaw gateway status
+ZeroClaw gateway status
 tailscale serve status
 ```
 
@@ -245,7 +245,7 @@ Expected result:
 If you switch modes later, update both layers:
 
 - Nerve `.env`
-- OpenClaw `gateway.controlUi.allowedOrigins`
+- ZeroClaw `gateway.controlUi.allowedOrigins`
 
 Common cleanup when switching to **Serve**:
 - change `HOST` back to `127.0.0.1`
@@ -267,7 +267,7 @@ Cause:
 - the Serve or tailnet origin is missing from `gateway.controlUi.allowedOrigins`
 
 Fix:
-- patch `~/.openclaw/openclaw.json`
+- patch `~/.ZeroClaw/ZeroClaw.json`
 - restart the gateway
 
 ### WebSocket upgrade fails or chat never connects
@@ -288,7 +288,7 @@ Mobile browsers are much happier with HTTPS for microphone access.
 
 ## Security notes
 
-- Do **not** expose OpenClaw gateway port `18789` publicly just because Nerve is on Tailscale
+- Do **not** expose ZeroClaw gateway port `18789` publicly just because Nerve is on Tailscale
 - Keep `NERVE_AUTH=true` for any non-localhost access
 - If you shared gateway tokens while debugging, rotate them afterward
 

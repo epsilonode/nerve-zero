@@ -38,18 +38,14 @@ vi.mock('@/hooks/useTabCompletion', () => ({
   }),
 }));
 
-const { mockUseInputHistory } = vi.hoisted(() => ({
-  mockUseInputHistory: vi.fn(() => ({
+vi.mock('@/hooks/useInputHistory', () => ({
+  useInputHistory: () => ({
     addToHistory: vi.fn(),
     isNavigating: vi.fn(() => false),
     reset: vi.fn(),
     navigateUp: vi.fn(() => null),
     navigateDown: vi.fn(() => null),
-  })),
-}));
-
-vi.mock('@/hooks/useInputHistory', () => ({
-  useInputHistory: mockUseInputHistory,
+  }),
 }));
 
 vi.mock('@/contexts/SessionContext', () => ({
@@ -259,13 +255,6 @@ describe('InputBar', () => {
     });
   });
 
-  it('shows the command palette shortcut in the composer helper copy', () => {
-    render(<InputBar onSend={vi.fn()} isGenerating={false} />);
-
-    expect(screen.getByText(/⌘K command palette/i)).toBeInTheDocument();
-    expect(screen.queryByText(/Ctrl\+F search/i)).not.toBeInTheDocument();
-  });
-
   it('uses the paperclip as the single primary attachment affordance', async () => {
     render(<InputBar onSend={vi.fn()} isGenerating={false} />);
 
@@ -279,7 +268,7 @@ describe('InputBar', () => {
     expect(screen.queryByRole('button', { name: /Browse by path/i })).not.toBeInTheDocument();
   });
 
-  it('stages workspace file add-to-chat requests as server_path file references for the active workspace agent', async () => {
+  it('stages workspace file add-to-chat requests as server_path file references', async () => {
     const onSend = vi.fn();
     const ref = createRef<InputBarHandle>();
     render(<InputBar ref={ref} onSend={onSend} isGenerating={false} />);
@@ -289,14 +278,11 @@ describe('InputBar', () => {
       expect(fileInput.accept).toBe('*/*');
     });
 
-    await (ref.current as InputBarHandle & {
-      addWorkspacePath: (path: string, kind: 'file' | 'directory', agentId?: string) => Promise<void>;
-    } | null)?.addWorkspacePath('attach-me.png', 'file', 'agent-research');
+    await ref.current?.addWorkspacePath('attach-me.png', 'file');
 
     await waitFor(() => {
-      expect(screen.getAllByText('attach-me.png')).toHaveLength(1);
-      expect(screen.getByText('Local File')).toBeInTheDocument();
-      expect(screen.queryByText('Path Ref')).not.toBeInTheDocument();
+      expect(screen.getAllByText('attach-me.png').length).toBeGreaterThan(0);
+      expect(screen.getByText('Path Ref')).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByLabelText('Send message'));
@@ -328,13 +314,6 @@ describe('InputBar', () => {
         path: '/workspace/attach-me.png',
         uri: 'file:///workspace/attach-me.png',
       },
-    });
-
-    const resolveCall = vi.mocked(global.fetch).mock.calls.find(([input]) => String(input).includes('/api/upload-reference/resolve'));
-    expect(resolveCall).toBeDefined();
-    expect(JSON.parse(String((resolveCall?.[1] as RequestInit | undefined)?.body ?? '{}'))).toMatchObject({
-      path: 'attach-me.png',
-      agentId: 'agent-research',
     });
 
     const fetchUrls = vi.mocked(global.fetch).mock.calls.map(([input]) => String(input));
@@ -738,73 +717,4 @@ describe('InputBar', () => {
     expect(screen.getByText('Upload')).toBeInTheDocument();
   });
 
-});
-
-describe('InputBar ArrowUp behavior', () => {
-  it('moves caret to start on single-line input before recalling history', async () => {
-    const navigateUp = vi.fn(() => 'previous command');
-    mockUseInputHistory.mockReturnValue({
-      addToHistory: vi.fn(),
-      isNavigating: vi.fn(() => false),
-      reset: vi.fn(),
-      navigateUp,
-      navigateDown: vi.fn(() => null),
-    } as ReturnType<typeof useInputHistory>);
-
-    render(<InputBar onSend={vi.fn()} isGenerating={false} />);
-    const input = screen.getByLabelText('Message input') as HTMLTextAreaElement;
-    fireEvent.change(input, { target: { value: 'current draft' } });
-    input.setSelectionRange(input.value.length, input.value.length);
-
-    fireEvent.keyDown(input, { key: 'ArrowUp' });
-
-    expect(navigateUp).not.toHaveBeenCalled();
-    expect(input.value).toBe('current draft');
-    expect(input.selectionStart).toBe(0);
-    expect(input.selectionEnd).toBe(0);
-  });
-
-  it('recalls history when caret is already at start on single-line input', async () => {
-    const navigateUp = vi.fn(() => 'previous command');
-    mockUseInputHistory.mockReturnValue({
-      addToHistory: vi.fn(),
-      isNavigating: vi.fn(() => false),
-      reset: vi.fn(),
-      navigateUp,
-      navigateDown: vi.fn(() => null),
-    } as ReturnType<typeof useInputHistory>);
-
-    render(<InputBar onSend={vi.fn()} isGenerating={false} />);
-    const input = screen.getByLabelText('Message input') as HTMLTextAreaElement;
-    fireEvent.change(input, { target: { value: 'current draft' } });
-    input.setSelectionRange(0, 0);
-
-    fireEvent.keyDown(input, { key: 'ArrowUp' });
-
-    expect(navigateUp).toHaveBeenCalledWith('current draft');
-    expect(input.value).toBe('previous command');
-  });
-
-  it('keeps native behavior for multi-line input', async () => {
-    const navigateUp = vi.fn(() => 'previous command');
-    mockUseInputHistory.mockReturnValue({
-      addToHistory: vi.fn(),
-      isNavigating: vi.fn(() => false),
-      reset: vi.fn(),
-      navigateUp,
-      navigateDown: vi.fn(() => null),
-    } as ReturnType<typeof useInputHistory>);
-
-    render(<InputBar onSend={vi.fn()} isGenerating={false} />);
-    const input = screen.getByLabelText('Message input') as HTMLTextAreaElement;
-    fireEvent.change(input, { target: { value: 'line 1\nline 2' } });
-    input.setSelectionRange(input.value.length, input.value.length);
-    const beforeCaret = input.selectionStart;
-
-    fireEvent.keyDown(input, { key: 'ArrowUp' });
-
-    expect(navigateUp).not.toHaveBeenCalled();
-    expect(input.value).toBe('line 1\nline 2');
-    expect(input.selectionStart).toBe(beforeCaret);
-  });
 });

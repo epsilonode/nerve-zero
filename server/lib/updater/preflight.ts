@@ -7,26 +7,12 @@ import { accessSync, constants } from 'node:fs';
 import { EXIT_CODES, UpdateError } from './types.js';
 import type { PreflightResult } from './types.js';
 
-const NODE_MIN_MAJOR = 22;
-
 /**
  * Run all preflight checks. Throws UpdateError on any failure.
  */
 export function runPreflight(cwd: string): PreflightResult {
   const gitVersion = requireCommand('git --version', 'git').replace('git version ', '').trim();
-  const nodeVersionRaw = requireCommand('node --version', 'node').trim();
-  const npmVersion = requireCommand('npm --version', 'npm').trim();
-
-  // Validate Node.js version
-  const nodeVersion = nodeVersionRaw.replace(/^v/, '');
-  const major = parseInt(nodeVersion.split('.')[0], 10);
-  if (isNaN(major) || major < NODE_MIN_MAJOR) {
-    throw new UpdateError(
-      `Node.js v${NODE_MIN_MAJOR}+ required, found v${nodeVersion}`,
-      'preflight',
-      EXIT_CODES.PREFLIGHT,
-    );
-  }
+  const bunVersionRaw = requireCommand('bun --version', 'bun').trim();
 
   // Verify cwd is a git repo
   try {
@@ -71,8 +57,7 @@ export function runPreflight(cwd: string): PreflightResult {
 
   return {
     gitVersion,
-    nodeVersion,
-    npmVersion,
+    bunVersion: bunVersionRaw,
     isGitRepo: true,
     hasWritePermission: true,
   };

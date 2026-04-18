@@ -19,23 +19,16 @@ import {
   getTopLevelAgentSessions,
 } from './sessionKeys';
 
-const INHERITED_THINKING_VALUE = 'thinkingDefault';
-
-type ThinkingSelection = typeof INHERITED_THINKING_VALUE | 'off' | 'low' | 'medium' | 'high' | 'adaptive';
-
 const THINKING_LEVELS: InlineSelectOption[] = [
-  { value: INHERITED_THINKING_VALUE, label: 'Default' },
   { value: 'off', label: 'off' },
   { value: 'low', label: 'low' },
   { value: 'medium', label: 'medium' },
   { value: 'high', label: 'high' },
-  { value: 'adaptive', label: 'adaptive' },
 ];
 const AFTER_RUN_OPTIONS: InlineSelectOption[] = [
   { value: 'keep', label: 'Keep' },
   { value: 'delete', label: 'Delete' },
 ];
-const INHERITED_MODEL_VALUE = 'primary';
 
 type ModelEntry = { id: string; alias?: string };
 type ModelCatalogResponse = {
@@ -64,7 +57,7 @@ export function SpawnAgentDialog({ open, onOpenChange, onSpawn }: SpawnAgentDial
   const [agentNameInput, setAgentNameInput] = useState('');
   const [parentRootKey, setParentRootKey] = useState('');
   const [model, setModel] = useState<string>('');
-  const [thinking, setThinking] = useState<ThinkingSelection>(INHERITED_THINKING_VALUE);
+  const [thinking, setThinking] = useState<string>('medium');
   const [cleanup, setCleanup] = useState<SubagentCleanupMode>('keep');
   const [spawning, setSpawning] = useState(false);
   const [fetchedModels, setFetchedModels] = useState<ModelEntry[]>([]);
@@ -108,14 +101,10 @@ export function SpawnAgentDialog({ open, onOpenChange, onSpawn }: SpawnAgentDial
   }, [open]);
 
   const modelOptions = useMemo<InlineSelectOption[]>(() => {
-    if (fetchedModels.length === 0) return [];
-    return [
-      { value: INHERITED_MODEL_VALUE, label: INHERITED_MODEL_VALUE },
-      ...fetchedModels.map((entry) => ({
-        value: entry.id,
-        label: entry.alias || deriveAlias(entry.id),
-      })),
-    ];
+    return fetchedModels.map((entry) => ({
+      value: entry.id,
+      label: entry.alias || deriveAlias(entry.id),
+    }));
   }, [fetchedModels]);
 
   const visibleModelOptions = useMemo<InlineSelectOption[]>(() => {
@@ -123,10 +112,7 @@ export function SpawnAgentDialog({ open, onOpenChange, onSpawn }: SpawnAgentDial
     return [{ value: '', label: 'No configured models' }];
   }, [modelOptions]);
 
-  const defaultModelId = useMemo(
-    () => (fetchedModels.length > 0 ? INHERITED_MODEL_VALUE : ''),
-    [fetchedModels],
-  );
+  const defaultModelId = useMemo(() => fetchedModels[0]?.id || '', [fetchedModels]);
 
   useEffect(() => {
     if (fetchedModels.length === 0) {
@@ -134,8 +120,7 @@ export function SpawnAgentDialog({ open, onOpenChange, onSpawn }: SpawnAgentDial
       return;
     }
 
-    const hasValidSelection = model === INHERITED_MODEL_VALUE || fetchedModels.some((entry) => entry.id === model);
-    if (!hasValidSelection) {
+    if (!model || !fetchedModels.some((entry) => entry.id === model)) {
       setModel(defaultModelId);
     }
   }, [defaultModelId, fetchedModels, model]);
@@ -162,7 +147,7 @@ export function SpawnAgentDialog({ open, onOpenChange, onSpawn }: SpawnAgentDial
     setAgentNameInput('');
     setParentRootKey(currentRootKey);
     setModel(defaultModelId);
-    setThinking(INHERITED_THINKING_VALUE);
+    setThinking('medium');
     setCleanup('keep');
     setModelLoadError('');
     setSpawnError('');
@@ -175,24 +160,22 @@ export function SpawnAgentDialog({ open, onOpenChange, onSpawn }: SpawnAgentDial
 
     setSpawning(true);
     setSpawnError('');
-    const spawnModel = model === INHERITED_MODEL_VALUE ? undefined : model;
-    const spawnThinking = thinking === INHERITED_THINKING_VALUE ? undefined : thinking;
     try {
       const spawnResult = mode === 'root'
         ? await onSpawn({
             kind: 'root',
             agentName: agentNameInput.trim(),
             task: task.trim(),
-            model: spawnModel,
-            thinking: spawnThinking,
+            model,
+            thinking,
           })
         : await onSpawn({
             kind: 'subagent',
             parentSessionKey: parentRootKey,
             task: task.trim(),
             label: label.trim() || undefined,
-            model: spawnModel,
-            thinking: spawnThinking,
+            model,
+            thinking,
             cleanup,
           });
 
@@ -511,7 +494,7 @@ export function SpawnAgentDialog({ open, onOpenChange, onSpawn }: SpawnAgentDial
                   <label className="cockpit-field-label mb-2 block">Thinking</label>
                   <InlineSelect
                     value={thinking}
-                    onChange={(value) => setThinking(value as ThinkingSelection)}
+                    onChange={setThinking}
                     options={THINKING_LEVELS}
                     ariaLabel="Select thinking level"
                     disabled={spawning}

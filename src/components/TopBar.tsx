@@ -245,7 +245,7 @@ export function TopBar({
               </span>
             </div>
             <div className="hidden xl:block text-[0.733rem] text-muted-foreground/80">
-              OpenClaw Cockpit{" "}
+              ZeroClaw Cockpit{" "}
             </div>
           </div>
         </div>

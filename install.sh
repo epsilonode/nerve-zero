@@ -3,7 +3,7 @@
 # Nerve Installer — one-command setup for the Nerve web interface
 #
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/daggerhashimoto/openclaw-nerve/master/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/epsilonode/nerve-zero/master/install.sh | bash
 #
 # Or with options:
 #   curl -fsSL ... | bash -s -- --dir ~/nerve --version v1.4.4
@@ -33,8 +33,8 @@ INSTALL_DIR="${NERVE_INSTALL_DIR:-${HOME}/nerve}"
 BRANCH="master"
 BRANCH_EXPLICIT=false
 VERSION=""
-REPO="https://github.com/daggerhashimoto/openclaw-nerve.git"
-NODE_MIN=22
+REPO="https://github.com/epsilonode/nerve-zero.git"
+BUN_MIN=1
 SKIP_SETUP=false
 DRY_RUN=false
 GATEWAY_TOKEN=""
@@ -62,10 +62,15 @@ dry()  { echo -e "  ${RAIL}  ${YELLOW}⊘${NC} ${DIM}[dry-run]${NC} $*"; }
 
 # ── Helpers ────────────────────────────────────────────────────────────
 # Detect OS family once
-IS_MAC=false; IS_DEBIAN=false; IS_FEDORA=false
-if [[ "$(uname -s)" == "Darwin" ]]; then IS_MAC=true;
-elif command -v apt-get &>/dev/null; then IS_DEBIAN=true;
-elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then IS_FEDORA=true; fi
+IS_MAC=false; IS_DEBIAN=false; IS_FEDORA=false; IS_WINDOWS=false
+case "$(uname -s)" in
+  Darwin)   IS_MAC=true ;;
+  MINGW*|MSYS*|CYGWIN*) IS_WINDOWS=true ;;
+  *)
+    if command -v apt-get &>/dev/null; then IS_DEBIAN=true;
+    elif command -v dnf &>/dev/null || command -v yum &>/dev/null; then IS_FEDORA=true; fi
+    ;;
+esac
 
 # Display a copy-pasteable command hint
 hint() { echo -e "  ${RAIL}"; echo -e "  ${RAIL}  ${BOLD}$1${NC}"; echo -e "  ${RAIL}"; }
@@ -77,7 +82,7 @@ print_deployment_guides() {
 
   [[ -r "$guides_file" ]] || return 1
 
-  rendered_guides="$(node - "$guides_file" <<'EOF'
+  rendered_guides="$(bun - "$guides_file" <<'EOF'
 const fs = require('node:fs');
 
 const guidesPath = process.argv[2];
@@ -156,27 +161,27 @@ run_with_dots() {
 }
 
 # Read the real gateway token. Systemd service file takes priority because
-# the gateway process uses its env var over openclaw.json (known 2026.2.19 bug).
+# the gateway process uses its env var over ZeroClaw.json (known 2026.2.19 bug).
 detect_gateway_token() {
   local token=""
   # 1. Check systemd service file (source of truth when present)
   local svc_files=(
-    "${HOME}/.config/systemd/user/openclaw-gateway.service"
-    "/etc/systemd/system/openclaw-gateway.service"
+    "${HOME}/.config/systemd/user/ZeroClaw-gateway.service"
+    "/etc/systemd/system/ZeroClaw-gateway.service"
   )
   for svc in "${svc_files[@]}"; do
     if [[ -f "$svc" ]]; then
-      token=$(grep -oP 'OPENCLAW_GATEWAY_TOKEN=\K\S+' "$svc" 2>/dev/null || true)
+      token=$(grep -oP 'ZeroClaw_GATEWAY_TOKEN=\K\S+' "$svc" 2>/dev/null || true)
       if [[ -n "$token" ]]; then
         echo "$token"
         return 0
       fi
     fi
   done
-  # 2. Fall back to openclaw.json
-  local config_file="${HOME}/.openclaw/openclaw.json"
+  # 2. Fall back to ZeroClaw.json
+  local config_file="${HOME}/.ZeroClaw/ZeroClaw.json"
   if [[ -f "$config_file" ]]; then
-    token=$(node -e "try{const c=JSON.parse(require('fs').readFileSync('$config_file','utf8'));console.log(c.gateway?.auth?.token??'')}catch{}" 2>/dev/null || echo "")
+    token=$(bun -e "try{const c=JSON.parse(require('fs').readFileSync('$config_file','utf8'));console.log(c.gateway?.auth?.token??'')}catch{}" 2>/dev/null || echo "")
     if [[ -n "$token" ]]; then
       echo "$token"
       return 0
@@ -235,7 +240,7 @@ fetch_latest_release_tag() {
   fi
 
   local tag
-  tag=$(printf '%s' "$response" | node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{try{const j=JSON.parse(d);if(typeof j.tag_name==="string")process.stdout.write(j.tag_name);}catch{}});') || return 1
+  tag=$(printf '%s' "$response" | bun -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>{try{const j=JSON.parse(d);if(typeof j.tag_name==="string")process.stdout.write(j.tag_name);}catch{}});') || return 1
 
   normalize_version_tag "$tag" || return 1
 }
@@ -308,8 +313,8 @@ normalize_access_mode() {
 normalize_gateway_url() {
   local url="$1"
 
-  if command -v node &>/dev/null; then
-    node -e 'const input=process.argv[1];try{const u=new URL(input);if(!["http:","https:"].includes(u.protocol))throw new Error("protocol");if(u.search||u.hash)throw new Error("query-or-fragment");process.stdout.write(u.toString().replace(/\/+$/,""));}catch{process.exit(1)}' "$url" 2>/dev/null || return 1
+  if command -v bun &>/dev/null; then
+    bun -e 'const input=process.argv[1];try{const u=new URL(input);if(!["http:","https:"].includes(u.protocol))throw new Error("protocol");if(u.search||u.hash)throw new Error("query-or-fragment");process.stdout.write(u.toString().replace(/\/+$/,""));}catch{process.exit(1)}' "$url" 2>/dev/null || return 1
   else
     [[ "$url" =~ ^https?://[^[:space:]?#]+$ ]] || return 1
     printf '%s' "${url%/}"
@@ -350,7 +355,7 @@ echo -e "  ${ORANGE} ░███  ░░█████  ░███ ░   █
 echo -e "  ${ORANGE} █████  ░░█████ ██████████ █████   █████    ░░███      ██████████${NC}"
 echo -e "  ${ORANGE}░░░░░    ░░░░░ ░░░░░░░░░░ ░░░░░   ░░░░░      ░░░      ░░░░░░░░░░${NC}"
 echo ""
-echo -e "  ${DIM}  Web interface for OpenClaw${NC}"
+echo -e "  ${DIM}  Web interface for ZeroClaw${NC}"
 echo ""
 if [[ "$DRY_RUN" == "true" ]]; then
   echo -e "  ${YELLOW}${BOLD}  ⊘  DRY RUN — nothing will be modified${NC}"
@@ -358,104 +363,87 @@ if [[ "$DRY_RUN" == "true" ]]; then
 fi
 echo -e "  ${DIM}│${NC}"
 
-# ── Check: OpenClaw installed ─────────────────────────────────────────
-check_openclaw() {
-  if command -v openclaw &>/dev/null; then
+# ── Check: ZeroClaw installed ─────────────────────────────────────────
+check_ZeroClaw() {
+  if command -v ZeroClaw &>/dev/null; then
     local ver
-    ver=$(openclaw --version 2>/dev/null | head -1 || echo "unknown")
-    ok "OpenClaw found: ${ver}"
+    ver=$(ZeroClaw --version 2>/dev/null | head -1 || echo "unknown")
+    ok "ZeroClaw found: ${ver}"
     return 0
   fi
 
   # Check common paths
   local candidates=(
-    "${HOME}/.nvm/versions/node/"*/bin/openclaw
-    /opt/homebrew/bin/openclaw
-    /usr/local/bin/openclaw
-    /usr/bin/openclaw
-    "${HOME}/.volta/bin/openclaw"
-    "${HOME}/.fnm/aliases/default/bin/openclaw"
+    "${HOME}/.nvm/versions/node/"*/bin/ZeroClaw
+    /opt/homebrew/bin/ZeroClaw
+    /usr/local/bin/ZeroClaw
+    /usr/bin/ZeroClaw
+    "${HOME}/.volta/bin/ZeroClaw"
+    "${HOME}/.fnm/aliases/default/bin/ZeroClaw"
   )
   for c in "${candidates[@]}"; do
     if [[ -x "$c" ]]; then
-      ok "OpenClaw found: ${c}"
+      ok "ZeroClaw found: ${c}"
       export PATH="$(dirname "$c"):$PATH"
       return 0
     fi
   done
 
-  fail "OpenClaw not found"
+  fail "ZeroClaw not found"
   echo ""
-  hint "Install OpenClaw:"
-  cmd "npm install -g openclaw"
+  hint "Install ZeroClaw:"
+  cmd "bun install -g ZeroClaw"
   echo ""
-  echo -e "  ${RAIL}  ${DIM}Docs: https://github.com/openclaw/openclaw${NC}"
+  echo -e "  ${RAIL}  ${DIM}Docs: https://github.com/ZeroClaw/ZeroClaw${NC}"
   echo ""
   exit 1
 }
 
-# ── Check: Node.js ────────────────────────────────────────────────────
-check_node() {
-  if ! command -v node &>/dev/null; then
-    fail "Node.js not found — version ${NODE_MIN}+ is required"
+# ── Check: Bun ────────────────────────────────────────────────────
+check_bun() {
+  if ! command -v bun &>/dev/null; then
+    fail "Bun not found — version ${BUN_MIN}+ is required"
     echo ""
-    hint "Install Node.js via nvm (recommended):"
-    cmd "curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash"
-    cmd "source ~/.bashrc"
-    cmd "nvm install ${NODE_MIN}"
-    echo ""
-    if $IS_MAC; then
-      echo -e "  ${RAIL}  ${DIM}Or via Homebrew: brew install node@${NODE_MIN}${NC}"
-    elif $IS_DEBIAN; then
-      echo -e "  ${RAIL}  ${DIM}Or via apt: https://deb.nodesource.com${NC}"
+    hint "Install Bun:"
+    if $IS_WINDOWS; then
+      cmd "powershell -c \"irm bun.sh/install.ps1 | iex\""
+      echo -e "  ${RAIL}  ${DIM}Or via Scoop: scoop install bun${NC}"
+    elif $IS_MAC; then
+      cmd "curl -fsSL https://bun.sh/install | bash"
+      echo -e "  ${RAIL}  ${DIM}Or via Homebrew: brew install bun${NC}"
+    else
+      cmd "curl -fsSL https://bun.sh/install | bash"
     fi
     echo ""
     exit 1
   fi
 
-  local node_ver
-  node_ver=$(node -v | sed 's/^v//')
-  local node_major
-  node_major=$(echo "$node_ver" | cut -d. -f1)
+  local bun_ver
+  bun_ver=$(bun --version | sed 's/^v//')
+  local bun_major
+  bun_major=$(echo "$bun_ver" | cut -d. -f1)
 
-  if [[ "$node_major" -ge "$NODE_MIN" ]]; then
-    ok "Node.js v${node_ver} (≥${NODE_MIN} required)"
+  if [[ "$bun_major" -ge "$BUN_MIN" ]]; then
+    ok "Bun v${bun_ver} (≥${BUN_MIN} required)"
   else
-    fail "Node.js v${node_ver} — version ${NODE_MIN}+ is required"
+    fail "Bun v${bun_ver} — version ${BUN_MIN}+ is required"
     echo ""
-    # Detect how Node was installed and suggest the right upgrade
-    local node_path
-    node_path=$(which node 2>/dev/null || echo "")
-    if [[ "$node_path" == *".nvm/"* ]]; then
-      hint "Upgrade via nvm:"
-      cmd "nvm install ${NODE_MIN}"
-      cmd "nvm use ${NODE_MIN}"
-    elif [[ "$node_path" == *"homebrew"* || "$node_path" == *"Cellar"* ]]; then
-      hint "Upgrade via Homebrew:"
-      cmd "brew install node@${NODE_MIN}"
-    elif $IS_DEBIAN; then
-      hint "Upgrade via nvm (recommended):"
-      cmd "curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash"
-      cmd "nvm install ${NODE_MIN}"
-    else
-      hint "Upgrade Node.js:"
-      cmd "nvm install ${NODE_MIN}"
-    fi
+    hint "Upgrade Bun:"
+    cmd "bun upgrade"
+    echo -e "  ${RAIL}  ${DIM}Or reinstall: curl -fsSL https://bun.sh/install | bash${NC}"
     echo ""
     exit 1
   fi
 }
 
-check_npm() {
-  if command -v npm &>/dev/null; then
-    ok "npm $(npm -v 2>/dev/null)"
+check_bun_pkg() {
+  if command -v bunx &>/dev/null; then
+    ok "bunx $(bun --version 2>/dev/null)"
   else
-    fail "npm not found — it ships with Node.js"
+    fail "bunx not found — it ships with Bun"
     echo ""
-    hint "Reinstall Node.js to get npm:"
-    cmd "nvm install ${NODE_MIN}"
-    echo ""
-    echo -e "  ${RAIL}  ${DIM}If using a system package, npm may be separate: sudo apt install npm${NC}"
+    hint "Reinstall Bun to restore bunx:"
+    cmd "curl -fsSL https://bun.sh/install | bash"
     echo ""
     exit 1
   fi
@@ -489,6 +477,12 @@ check_git() {
 
 # ── Check: Build tools (needed for node-pty native compilation) ───────
 check_build_tools() {
+  # Build tools are not required on Windows — Bun ships pre-built binaries
+  if $IS_WINDOWS; then
+    ok "Build tools check skipped (Windows)"
+    return 0
+  fi
+
   if command -v make &>/dev/null && command -v g++ &>/dev/null; then
     ok "Build tools available (make, g++)"
     return 0
@@ -561,18 +555,18 @@ check_build_tools() {
 check_gateway() {
   local gw_url="${GATEWAY_URL_OVERRIDE:-http://127.0.0.1:18789}"
 
-  # Try to read from openclaw.json when no explicit gateway URL was provided
-  local config_file="${HOME}/.openclaw/openclaw.json"
+  # Try to read from ZeroClaw.json when no explicit gateway URL was provided
+  local config_file="${HOME}/.ZeroClaw/ZeroClaw.json"
   if [[ -z "$GATEWAY_URL_OVERRIDE" && -f "$config_file" ]]; then
     local port
-    port=$(node -e "try{const c=JSON.parse(require('fs').readFileSync('$config_file','utf8'));console.log(c.gateway?.port??18789)}catch{console.log(18789)}" 2>/dev/null || echo "18789")
+    port=$(bun -e "try{const c=JSON.parse(require('fs').readFileSync('$config_file','utf8'));console.log(c.gateway?.port??18789)}catch{console.log(18789)}" 2>/dev/null || echo "18789")
     gw_url="http://127.0.0.1:${port}"
   fi
 
   if curl -sf "${gw_url}/health" &>/dev/null || curl -sf "${gw_url}/" &>/dev/null; then
-    ok "OpenClaw gateway reachable at ${gw_url}"
+    ok "ZeroClaw gateway reachable at ${gw_url}"
   else
-    warn "Gateway not reachable at ${gw_url} — start it with: openclaw gateway start"
+    warn "Gateway not reachable at ${gw_url} — start it with: ZeroClaw gateway start"
   fi
 
   # Verify auth token exists (needed for .env generation and service connectivity)
@@ -583,18 +577,18 @@ check_gateway() {
   if [[ -n "$gw_token" ]]; then
     ok "Gateway auth token present"
   else
-    warn "No gateway auth token found — run: ${CYAN}openclaw onboard --install-daemon${NC}"
+    warn "No gateway auth token found — run: ${CYAN}ZeroClaw onboard --install-daemon${NC}"
   fi
 }
 
 # ── [1/5] Prerequisites ───────────────────────────────────────────────
 stage "Prerequisites"
 
-check_node
-check_npm
+check_bun
+check_bun_pkg
 check_git
 check_build_tools
-check_openclaw
+check_ZeroClaw
 check_gateway
 
 # ── [2/5] Clone or update ────────────────────────────────────────────
@@ -692,12 +686,12 @@ fi
 stage "Install & Build"
 
 if [[ "$DRY_RUN" == "true" ]]; then
-  dry "Would run: npm ci"
-  dry "Would run: npm run build"
+  dry "Would run: bun install"
+  dry "Would run: bun run build"
 else
-  npm_log=$(mktemp /tmp/nerve-npm-install-XXXXXX)
+  npm_log=$(mktemp /tmp/nerve-bun-install-XXXXXX)
 
-  run_with_dots "Installing dependencies" bash -c "npm ci --loglevel=error > '$npm_log' 2>&1"
+  run_with_dots "Installing dependencies" bash -c "bun install --frozen-lockfile > '$npm_log' 2>&1"
   if [[ $RWD_EXIT -eq 0 ]]; then
     ok "Dependencies installed"
 
@@ -710,7 +704,7 @@ else
       [[ -d server-dist ]] && cp -a server-dist "$BUILD_BACKUP/server-dist"
     fi
   else
-    fail "npm ci failed"
+    fail "bun install failed"
     echo ""
     # Show the last meaningful lines
     echo -e "  ${RAIL}  ${DIM}── Last 10 lines ──${NC}"
@@ -739,12 +733,12 @@ else
     elif grep -qi 'ERESOLVE\|peer dep\|could not resolve' "$npm_log"; then
       hint "Dependency conflict — try with a clean slate:"
       cmd "rm -rf node_modules package-lock.json"
-      cmd "npm install"
+      cmd "bun install"
     else
       hint "Troubleshooting:"
       echo -e "  ${RAIL}  ${DIM}1. Check the full log: cat ${npm_log}${NC}"
-      echo -e "  ${RAIL}  ${DIM}2. Ensure Node ${NODE_MIN}+ and build tools are installed${NC}"
-      echo -e "  ${RAIL}  ${DIM}3. Try: rm -rf node_modules && npm install${NC}"
+      echo -e "  ${RAIL}  ${DIM}2. Ensure Bun ${NODE_MIN}+ and build tools are installed${NC}"
+      echo -e "  ${RAIL}  ${DIM}3. Try: rm -rf node_modules && bun install${NC}"
     fi
     echo ""
     exit 1
@@ -752,7 +746,7 @@ else
 
   build_log=$(mktemp /tmp/nerve-build-XXXXXX)
 
-  run_with_dots "Building project" bash -c "npm run build > '$build_log' 2>&1"
+  run_with_dots "Building project" bash -c "bun run build > '$build_log' 2>&1"
   if [[ $RWD_EXIT -eq 0 ]]; then
     ok "Client and server built"
   else
@@ -773,7 +767,7 @@ else
     echo ""
     hint "Troubleshooting:"
     echo -e "  ${RAIL}  ${DIM}1. Check the full log: cat ${build_log}${NC}"
-    echo -e "  ${RAIL}  ${DIM}2. Try rebuilding: npm run build${NC}"
+    echo -e "  ${RAIL}  ${DIM}2. Try rebuilding: bun run build${NC}"
     echo ""
     exit 1
   fi
@@ -855,7 +849,7 @@ else
   fi
 fi
 
-# ── Auto-generate .env from OpenClaw gateway config ───────────────────
+# ── Auto-generate .env from ZeroClaw gateway config ───────────────────
 generate_env_from_gateway() {
   # Already have an .env? Don't overwrite.
   if [[ -f .env ]]; then
@@ -866,14 +860,14 @@ generate_env_from_gateway() {
   local gw_token="${GATEWAY_TOKEN:-}"
   local gw_url="${GATEWAY_URL_OVERRIDE:-}"
   local gw_port="18789"
-  local config_file="${HOME}/.openclaw/openclaw.json"
+  local config_file="${HOME}/.ZeroClaw/ZeroClaw.json"
 
   # Read token from systemd/config if no --gateway-token was passed
   if [[ -z "$gw_token" ]]; then
     gw_token=$(detect_gateway_token)
   fi
   if [[ -z "$gw_url" && -f "$config_file" ]]; then
-    gw_port=$(node -e "try{const c=JSON.parse(require('fs').readFileSync('$config_file','utf8'));console.log(c.gateway?.port??18789)}catch{console.log(18789)}" 2>/dev/null || echo "18789")
+    gw_port=$(bun -e "try{const c=JSON.parse(require('fs').readFileSync('$config_file','utf8'));console.log(c.gateway?.port??18789)}catch{console.log(18789)}" 2>/dev/null || echo "18789")
     gw_url="http://127.0.0.1:${gw_port}"
   fi
   if [[ -z "$gw_url" ]]; then
@@ -910,10 +904,10 @@ GATEWAY_URL=${gw_url}
 GATEWAY_TOKEN=${gw_token}
 PORT=${nerve_port}
 ENVEOF
-    ok "Generated .env from OpenClaw gateway config"
+    ok "Generated .env from ZeroClaw gateway config"
   else
     warn "Cannot auto-generate .env — no gateway token found"
-    warn "Run: ${CYAN}npm run setup${NC} to configure manually"
+    warn "Run: ${CYAN}bun run setup${NC} to configure manually"
     ENV_MISSING=true
   fi
 }
@@ -949,26 +943,26 @@ else
         if read -r answer < /dev/tty 2>/dev/null; then
           if [[ "$(echo "$answer" | tr "[:upper:]" "[:lower:]")" == "y" ]]; then
             echo ""
-            NERVE_INSTALLER=1 npm run setup < /dev/tty 2>/dev/null || {
-              warn "Setup wizard failed (no TTY?) — run ${CYAN}npm run setup${NC} manually"
+            NERVE_INSTALLER=1 bun run setup < /dev/tty 2>/dev/null || {
+              warn "Setup wizard failed (no TTY?) — run ${CYAN}bun run setup${NC} manually"
             }
           else
             ok "Keeping existing configuration"
           fi
         else
-          warn "Cannot read input — run ${CYAN}npm run setup${NC} manually to reconfigure"
+          warn "Cannot read input — run ${CYAN}bun run setup${NC} manually to reconfigure"
         fi
       else
         ok "Existing .env found — keeping current configuration"
       fi
     elif [[ -n "$ACCESS_MODE" ]]; then
       info "Explicit access mode requested — running non-interactive setup wizard..."
-      NERVE_INSTALLER=1 npm run setup -- --defaults --access-mode "$ACCESS_MODE" || {
+      NERVE_INSTALLER=1 bun run setup -- --defaults --access-mode "$ACCESS_MODE" || {
         fail "Setup failed for --access-mode ${ACCESS_MODE}"
         exit 1
       }
     elif [[ "$INTERACTIVE" == "true" ]]; then
-      NERVE_INSTALLER=1 npm run setup < /dev/tty 2>/dev/null || {
+      NERVE_INSTALLER=1 bun run setup < /dev/tty 2>/dev/null || {
         warn "Setup wizard failed — attempting auto-config from gateway..."
         generate_env_from_gateway
       }
@@ -985,13 +979,13 @@ stage "Service"
 setup_systemd() {
   local service_file="/etc/systemd/system/nerve.service"
   local node_bin
-  node_bin=$(which node)
+  node_bin=$(which bun)
   local working_dir="$INSTALL_DIR"
 
   local node_dir
   node_dir=$(dirname "${node_bin}")
 
-  # Run as the installing user (who has openclaw config)
+  # Run as the installing user (who has ZeroClaw config)
   local install_user="${SUDO_USER:-${USER}}"
   local install_home="${HOME}"
   
@@ -1010,28 +1004,28 @@ setup_systemd() {
     fi
   fi
   
-  # Fallback: Detect from openclaw binary location (handles root installs where openclaw is in /home/user)
+  # Fallback: Detect from ZeroClaw binary location (handles root installs where ZeroClaw is in /home/user)
   # Note: glob may match multiple users — picks first (alphabetical)
   if [[ "${install_user}" == "root" ]]; then
-    local openclaw_bin
-    openclaw_bin=$(command -v openclaw 2>/dev/null || echo "")
-    if [[ -z "$openclaw_bin" ]]; then
+    local ZeroClaw_bin
+    ZeroClaw_bin=$(command -v ZeroClaw 2>/dev/null || echo "")
+    if [[ -z "$ZeroClaw_bin" ]]; then
       # Check common nvm locations
-      for candidate in /home/*/.nvm/versions/node/*/bin/openclaw; do
+      for candidate in /home/*/.nvm/versions/node/*/bin/ZeroClaw; do
         if [[ -x "$candidate" ]]; then
-          openclaw_bin="$candidate"
+          ZeroClaw_bin="$candidate"
           break
         fi
       done
     fi
     
-    if [[ -n "$openclaw_bin" ]]; then
+    if [[ -n "$ZeroClaw_bin" ]]; then
       # Extract user from path like /home/username/.nvm/...
-      if [[ "$openclaw_bin" =~ ^/home/([^/]+)/ ]]; then
+      if [[ "$ZeroClaw_bin" =~ ^/home/([^/]+)/ ]]; then
         local detected_user="${BASH_REMATCH[1]}"
         install_user="$detected_user"
         install_home="/home/$detected_user"
-        info "Detected openclaw owner: ${detected_user}"
+        info "Detected ZeroClaw owner: ${detected_user}"
       fi
     fi
   fi
@@ -1041,7 +1035,7 @@ setup_systemd() {
 
   cat > "$tmp_service" <<EOF
 [Unit]
-Description=Nerve - OpenClaw Web UI
+Description=Nerve - ZeroClaw Web UI
 After=network.target
 
 [Service]
@@ -1073,7 +1067,7 @@ EOF
     else
       systemctl daemon-reload
       systemctl enable nerve.service &>/dev/null
-      ok "Systemd service installed (not started — run ${CYAN}npm run setup${NC} first, then ${CYAN}systemctl start nerve.service${NC})"
+      ok "Systemd service installed (not started — run ${CYAN}bun run setup${NC} first, then ${CYAN}systemctl start nerve.service${NC})"
     fi
   else
     echo ""
@@ -1091,7 +1085,7 @@ EOF
 
 setup_launchd() {
   local node_bin
-  node_bin=$(which node)
+  node_bin=$(which bun)
   local working_dir="$INSTALL_DIR"
   local plist_dir="${HOME}/Library/LaunchAgents"
   local plist_file="${plist_dir}/com.nerve.server.plist"
@@ -1185,13 +1179,15 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
       uid=$(id -u)
       launchctl bootout "gui/${uid}/com.nerve.server" 2>/dev/null || launchctl stop com.nerve.server 2>/dev/null || true
       setup_launchd
+    elif [[ "$DRY_RUN" == "true" ]]; then
+      dry "Would install launchd service"
     elif [[ "$INTERACTIVE" == "true" ]]; then
       printf "  ${RAIL}  ${YELLOW}?${NC} Install as a launchd service (starts on login)? (Y/n) "
       if read -r answer < /dev/tty 2>/dev/null; then
         if [[ "$(echo "$answer" | tr "[:upper:]" "[:lower:]")" != "n" ]]; then
           setup_launchd
         else
-          ok "Skipped — start manually with: cd ${INSTALL_DIR} && npm run prod"
+          ok "Skipped — start manually with: cd ${INSTALL_DIR} && bun start"
         fi
       else
         info "Cannot read input — installing launchd service by default"
@@ -1201,6 +1197,21 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
       info "Installing launchd service..."
       setup_launchd
     fi
+    echo ""
+  fi
+elif $IS_WINDOWS; then
+  # ── Windows (Git Bash): no service manager available ─────────────────
+  if [[ "$DRY_RUN" != "true" ]]; then
+    echo ""
+    info "Windows detected — automatic service install is not supported here."
+    echo ""
+    echo -e "  ${RAIL}  ${BOLD}Start Nerve manually:${NC}"
+    echo -e "  ${RAIL}    ${CYAN}\$ cd ${INSTALL_DIR} && bun start${NC}"
+    echo ""
+    echo -e "  ${RAIL}  ${DIM}To run as a background service, use NSSM (Non-Sucking Service Manager):${NC}"
+    echo -e "  ${RAIL}    ${CYAN}https://nssm.cc${NC}"
+    echo -e "  ${RAIL}    ${CYAN}\$ nssm install nerve \"$(which bun)\" \"server-dist/index.js\"${NC}"
+    echo -e "  ${RAIL}    ${CYAN}\$ nssm start nerve${NC}"
     echo ""
   fi
 elif command -v systemctl &>/dev/null; then
@@ -1223,13 +1234,15 @@ elif command -v systemctl &>/dev/null; then
         sudo systemctl stop nerve.service 2>/dev/null || true
       fi
       setup_systemd
+    elif [[ "$DRY_RUN" == "true" ]]; then
+      dry "Would install systemd service"
     elif [[ "$INTERACTIVE" == "true" ]]; then
       printf "  ${RAIL}  ${YELLOW}?${NC} Install as a systemd service? (Y/n) "
       if read -r answer < /dev/tty 2>/dev/null; then
         if [[ "$(echo "$answer" | tr "[:upper:]" "[:lower:]")" != "n" ]]; then
           setup_systemd
         else
-          ok "Skipped — start manually with: cd ${INSTALL_DIR} && npm run prod"
+          ok "Skipped — start manually with: cd ${INSTALL_DIR} && bun start"
         fi
       else
         info "Cannot read input — installing systemd service by default"
@@ -1301,7 +1314,7 @@ else
     echo -e "     ${DIM}Restart:   sudo systemctl restart nerve.service${NC}"
     echo -e "     ${DIM}Logs:      sudo journalctl -u nerve.service -f${NC}"
   else
-    echo -e "     ${DIM}Start:     cd ${INSTALL_DIR} && npm run prod${NC}"
+    echo -e "     ${DIM}Start:     cd ${INSTALL_DIR} && bun start${NC}"
   fi
 fi
 echo ""
@@ -1313,7 +1326,7 @@ fi
 
 if [[ "$ENV_MISSING" == "true" ]] || [[ ! -f "${INSTALL_DIR}/.env" ]]; then
   warn "Install complete but Nerve is not fully configured"
-  info "Run: cd ${INSTALL_DIR} && npm run setup"
+  info "Run: cd ${INSTALL_DIR} && bun run setup"
   exit 2  # partial success — installed but non-functional
 fi
 exit 0

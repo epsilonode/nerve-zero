@@ -258,7 +258,7 @@ Files are only served from these directories:
 | Prefix | Source |
 |--------|--------|
 | `/tmp` | Hardcoded |
-| `~/.openclaw` | Derived from `os.homedir()` |
+| `~/.ZeroClaw` | Derived from `os.homedir()` |
 | `MEMORY_DIR` | From configuration |
 
 The request path is resolved to an absolute path via `path.resolve()`, blocking `..` traversal. The resolved path must start with one of the allowed prefixes (with a path separator check to prevent `/tmp-evil` matching `/tmp`).
@@ -268,7 +268,7 @@ The request path is resolved to an absolute path via `path.resolve()`, blocking 
 After the prefix check passes, the file's **real path** is resolved via `fs.realpathSync()`. The real path is then re-checked against the same prefix allowlist. This prevents:
 
 - Symlinks inside `/tmp` pointing to `/etc/passwd`
-- Symlinks inside `~/.openclaw` pointing outside the allowed tree
+- Symlinks inside `~/.ZeroClaw` pointing outside the allowed tree
 
 If the real path falls outside allowed prefixes → **403 Access denied**.
 
@@ -280,7 +280,7 @@ The `~` prefix in input paths is expanded to `os.homedir()` before resolution, p
 
 ## WebSocket Proxy Security
 
-The WebSocket proxy (connecting the frontend to the OpenClaw gateway) restricts target hostnames:
+The WebSocket proxy (connecting the frontend to the ZeroClaw gateway) restricts target hostnames:
 
 **Default allowed hosts:** `localhost`, `127.0.0.1`, `::1`
 
@@ -307,23 +307,23 @@ Nerve performs **server-side token injection** to provide a zero-config connecti
 
 This keeps the managed gateway token on the server while still allowing explicit manual credentials for unsupported or custom connection paths.
 
-### Device Identity & Gateway Scopes
+### Gateway Token Handling
 
-OpenClaw 2026.2.19+ requires a signed device identity (Ed25519 keypair) for WebSocket connections to receive `operator.read` / `operator.write` scopes. Plain token authentication alone grants zero scopes.
+Current Nerve connects to ZeroClaw over `/ws/chat` using bearer-token authentication at WebSocket upgrade time.
 
-Nerve generates a persistent device identity on first start (stored at `~/.nerve/device-identity.json`) and injects it into the connect handshake. The gateway always stays on loopback (`127.0.0.1`) — Nerve proxies all external connections through its WS proxy.
+The managed local flow keeps the gateway on loopback and proxies browser traffic through Nerve's `/ws` endpoint.
 
-**Normal setup path:** the setup wizard now pre-pairs Nerve's device identity while it is configuring the gateway, so a fresh install usually does **not** require a manual `openclaw devices approve` step.
+**Normal setup path:** pair ZeroClaw first, exchange the one-time pair code at `/pair`, then use the returned `zc_...` bearer token in Nerve's handshake screen or managed local flow.
 
-**Manual approval is fallback / recovery guidance:**
+**Recovery guidance:**
 
 1. Start Nerve and open the UI in a browser
-2. If the device is still pending, list requests: `openclaw devices list`
-3. Approve the Nerve device: `openclaw devices approve <requestId>`
+2. Generate a fresh pair code from the gateway
+3. Exchange it for a fresh bearer token and reconnect
 
-If the device is rejected (for example after a gateway reset), the proxy falls back to token-only auth. The connection succeeds but with reduced scopes, and chat or tool calls may fail with "missing scope" errors until the device is approved again.
+If the gateway token is stale (for example after a gateway reset), reconnect with a freshly paired `zc_...` token.
 
-**Architecture:** `Browser (remote) → Nerve (0.0.0.0:3080) → WS proxy → Gateway (127.0.0.1:18789)`. The gateway never needs to bind to LAN or be directly network-accessible.
+**Architecture:** `Browser (remote) → Nerve (0.0.0.0:3080) → WS proxy → Gateway (127.0.0.1:<active-port>/ws/chat)`. The gateway never needs to bind to LAN or be directly network-accessible.
 
 ---
 

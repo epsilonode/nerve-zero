@@ -16,8 +16,8 @@ describe('memories routes', () => {
   beforeEach(async () => {
     vi.resetModules();
     homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'memories-test-'));
-    tmpDir = path.join(homeDir, '.openclaw', 'workspace');
-    researchWorkspace = path.join(homeDir, '.openclaw', 'workspace-research');
+    tmpDir = path.join(homeDir, '.ZeroClaw', 'workspace');
+    researchWorkspace = path.join(homeDir, '.ZeroClaw', 'workspace-research');
     memoryDir = path.join(tmpDir, 'memory');
     memoryPath = path.join(tmpDir, 'MEMORY.md');
     await fs.mkdir(memoryDir, { recursive: true });

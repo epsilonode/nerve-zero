@@ -32,25 +32,10 @@ function getEffortKey(sessionKey?: string | null) {
   return sessionKey ? `oc-effort-${sessionKey}` : 'oc-effort-default';
 }
 
-const INHERITED_MODEL_VALUE = 'primary';
-const INHERITED_EFFORT_VALUE = 'thinkingDefault';
+type EffortLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+const EFFORT_OPTIONS: EffortLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'];
 
-type EffortLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'adaptive';
-type EffortSelection = typeof INHERITED_EFFORT_VALUE | EffortLevel;
-const EFFORT_OPTIONS: EffortLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'adaptive'];
-
-function normalizeEffortLevel(raw: string | null | undefined): EffortLevel | null {
-  const normalized = raw?.toLowerCase();
-  return normalized && EFFORT_OPTIONS.includes(normalized as EffortLevel)
-    ? normalized as EffortLevel
-    : null;
-}
-export type GatewayModelInfo = {
-  id: string;
-  label: string;
-  provider: string;
-  role?: 'primary' | 'fallback' | 'allowed';
-};
+export type GatewayModelInfo = { id: string; label: string; provider: string };
 
 type GatewayModelsResponse = {
   models: GatewayModelInfo[];
@@ -75,15 +60,6 @@ function resolveModelId(raw: string, options: GatewayModelInfo[]): string {
   const bySuffix = options.find(m => m.id.endsWith('/' + raw) || raw.endsWith('/' + m.label));
   if (bySuffix) return bySuffix.id;
   return raw;
-}
-
-function modelRefsMatch(a: string | null | undefined, b: string | null | undefined, options: GatewayModelInfo[]): boolean {
-  if (!a || !b) return false;
-  if (a === b) return true;
-  const resolvedA = resolveModelId(a, options);
-  const resolvedB = resolveModelId(b, options);
-  if (resolvedA === resolvedB) return true;
-  return baseModelName(resolvedA) === baseModelName(resolvedB);
 }
 
 export function buildSelectableModelList(
@@ -144,14 +120,13 @@ export interface UseModelEffortReturn {
   effortOptions: { value: string; label: string }[];
   selectedModel: string;
   selectedEffort: string;
-  selectedEffortLabel: string;
   handleModelChange: (next: string) => Promise<void>;
   handleEffortChange: (next: string) => Promise<void>;
   controlsDisabled: boolean;
   uiError: string | null;
 }
 
-/** Hook to manage the model reasoning effort level selection. */
+/** Hook to manage the model reasoning effort level (low/medium/high). */
 export function useModelEffort(): UseModelEffortReturn {
   const { rpc, connectionState, model, thinking } = useGateway();
   const { currentSession, sessions, updateSession } = useSessionContext();
@@ -172,7 +147,6 @@ export function useModelEffort(): UseModelEffortReturn {
   // Keyed by session key → resolved model ID. Survives session switches so
   // we don't re-fetch when switching back to a previously visited session.
   const [resolvedSessionModels, setResolvedSessionModels] = useState<Record<string, string>>({});
-  const [resolvedSessionThinking, setResolvedSessionThinking] = useState<Record<string, EffortLevel>>({});
 
   const rawCurrentSessionModel = useMemo(() => {
     const cached = resolvedSessionModels[currentSession];
@@ -186,18 +160,12 @@ export function useModelEffort(): UseModelEffortReturn {
     () => buildSelectableModelList(gatewayModels, rawCurrentSessionModel || model),
     [gatewayModels, rawCurrentSessionModel, model],
   );
-  const primaryModelId = useMemo(
-    () => gatewayModels?.find((entry) => entry.role === 'primary')?.id || null,
-    [gatewayModels],
-  );
-  const [selectedEffort, setSelectedEffort] = useState<EffortSelection>(() => {
+  const [selectedEffort, setSelectedEffort] = useState<EffortLevel>(() => {
     try {
-      const saved = localStorage.getItem(getEffortKey(currentSession)) as EffortSelection | null;
-      return saved && (saved === INHERITED_EFFORT_VALUE || EFFORT_OPTIONS.includes(saved as EffortLevel))
-        ? saved
-        : INHERITED_EFFORT_VALUE;
+      const saved = localStorage.getItem(getEffortKey(currentSession)) as EffortLevel | null;
+      return saved && EFFORT_OPTIONS.includes(saved) ? saved : 'low';
     } catch {
-      return INHERITED_EFFORT_VALUE;
+      return 'low';
     }
   });
   const [prevEffortSource, setPrevEffortSource] = useState<string | null>(null);
@@ -205,50 +173,24 @@ export function useModelEffort(): UseModelEffortReturn {
   // Resolve current session's model.
   // Priority: resolved cache (from transcript/cron) → session.model from gateway
   const currentSessionModel = useMemo(() => {
-    const sessionRecord = sessions.find(sess => getSessionKey(sess) === currentSession);
-
     // Check cached resolved model first (accurate for cron/subagent sessions)
-    const raw = resolvedSessionModels[currentSession] || sessionRecord?.model;
+    const cached = resolvedSessionModels[currentSession];
+    if (cached) return resolveModelId(cached, modelOptionsList);
+
+    // Fall back to session.model from sessions.list (correct for main, default for others)
+    const s = sessions.find(sess => getSessionKey(sess) === currentSession);
+    const raw = s?.model;
     if (!raw) return null;
-
-    if (modelRefsMatch(raw, primaryModelId, modelOptionsList)) {
-      return INHERITED_MODEL_VALUE;
-    }
-
     return resolveModelId(raw, modelOptionsList);
-  }, [sessions, currentSession, modelOptionsList, resolvedSessionModels, primaryModelId]);
+  }, [sessions, currentSession, modelOptionsList, resolvedSessionModels]);
 
-  // Resolve current session's thinking level.
-  // Prefer explicit overrides. If no explicit override exists, surface
-  // the inherited default selector state (thinkingDefault).
+  // Resolve current session's thinking level
   const currentSessionThinking = useMemo(() => {
     const s = sessions.find(sess => getSessionKey(sess) === currentSession);
-
-    const explicit = normalizeEffortLevel(s?.thinkingLevel);
-    if (explicit) {
-      return explicit;
-    }
-
-    const effective = normalizeEffortLevel(s?.thinking);
-    const inheritedDefault = normalizeEffortLevel(thinking);
-    if (effective && inheritedDefault && effective !== inheritedDefault) {
-      return effective;
-    }
-
+    const raw = (s?.thinkingLevel || s?.thinking)?.toLowerCase();
+    if (raw && EFFORT_OPTIONS.includes(raw as EffortLevel)) return raw as EffortLevel;
     return null;
-  }, [sessions, currentSession, thinking]);
-
-  const inheritedEffortLabel = useMemo<EffortSelection>(() => {
-    const s = sessions.find(sess => getSessionKey(sess) === currentSession);
-    return resolvedSessionThinking[currentSession]
-      || normalizeEffortLevel(s?.thinking)
-      || normalizeEffortLevel(thinking)
-      || INHERITED_EFFORT_VALUE;
-  }, [sessions, currentSession, thinking, resolvedSessionThinking]);
-
-  const selectedEffortLabel = selectedEffort === INHERITED_EFFORT_VALUE
-    ? inheritedEffortLabel
-    : selectedEffort;
+  }, [sessions, currentSession]);
 
   // Sync model dropdown when switching sessions (setState-during-render pattern)
   //
@@ -258,10 +200,7 @@ export function useModelEffort(): UseModelEffortReturn {
   // is available).
   const rawModelSource = currentSessionModel || model || '--';
   let modelSource = rawModelSource;
-
-  if (modelSource !== '--' && modelRefsMatch(modelSource, primaryModelId, modelOptionsList)) {
-    modelSource = INHERITED_MODEL_VALUE;
-  } else if (modelSource !== '--' && modelSource !== INHERITED_MODEL_VALUE && !modelOptionsList.some(m => m.id === modelSource)) {
+  if (modelSource !== '--' && !modelOptionsList.some(m => m.id === modelSource)) {
     const byLabel = modelOptionsList.find(m => m.label === modelSource);
     const srcBase = baseModelName(modelSource);
     const byBaseName = modelOptionsList.find(m => baseModelName(m.id) === srcBase);
@@ -285,16 +224,18 @@ export function useModelEffort(): UseModelEffortReturn {
   }
 
   // Sync effort dropdown from gateway thinking level (setState-during-render pattern)
-  const effortSource = `${currentSession}:${currentSessionThinking ?? INHERITED_EFFORT_VALUE}`;
+  const effortSource = `${currentSession}:${currentSessionThinking ?? thinking ?? ''}`;
   if (effortSource !== prevEffortSource) {
     setPrevEffortSource(effortSource);
     // Fix 1: Respect optimistic lock for effort changes too
     if (Date.now() <= effortLockUntilRef.current) {
       // Skip — we're in the grace period after a manual effort change
-    } else {
-      const nextEffortSelection = currentSessionThinking || INHERITED_EFFORT_VALUE;
-      setSelectedEffort(nextEffortSelection);
-      try { localStorage.setItem(getEffortKey(currentSession), nextEffortSelection); } catch { /* ignore */ }
+    } else if (currentSessionThinking) {
+      setSelectedEffort(currentSessionThinking);
+      try { localStorage.setItem(getEffortKey(currentSession), currentSessionThinking); } catch { /* ignore */ }
+    } else if (thinking && thinking !== '--' && EFFORT_OPTIONS.includes(thinking as EffortLevel)) {
+      setSelectedEffort(thinking as EffortLevel);
+      try { localStorage.setItem(getEffortKey(currentSession), thinking); } catch { /* ignore */ }
     }
   }
 
@@ -341,37 +282,24 @@ export function useModelEffort(): UseModelEffortReturn {
   useEffect(() => {
     const signal = { cancelled: false };
     (async () => {
-      if (signal.cancelled || !currentSession) return;
+      const sessionInfo = await fetchGatewaySessionInfo(currentSession || undefined);
+      if (signal.cancelled) return;
 
-      let resolvedModel: string | null = null;
-      let resolvedThinking: EffortLevel | null = null;
-
-      try {
-        const info = await fetchGatewaySessionInfo(currentSession);
-        if (signal.cancelled) return;
-        resolvedThinking = normalizeEffortLevel(info?.thinking);
-      } catch (err) {
-        console.warn('[useModelEffort] Failed to fetch gateway session info:', err);
-      }
-
-      try {
-        const res = await fetch(`/api/sessions/runtime?sessionKey=${encodeURIComponent(currentSession)}`);
-        if (signal.cancelled) return;
-        const data = await res.json() as { ok: boolean; model?: string | null; thinking?: string | null; missing?: boolean };
-        if (data.ok) {
-          if (data.model != null) resolvedModel = data.model;
-          if (!resolvedThinking) resolvedThinking = normalizeEffortLevel(data.thinking);
+      if (sessionInfo?.thinking && !currentSessionThinking) {
+        const level = sessionInfo.thinking.toLowerCase() as EffortLevel;
+        if (EFFORT_OPTIONS.includes(level)) {
+          setSelectedEffort(level);
+          try { localStorage.setItem(getEffortKey(currentSession), level); } catch { /* ignore */ }
         }
-      } catch { /* ignore */ }
-
-      if (resolvedThinking && !signal.cancelled) {
-        setResolvedSessionThinking(prev => prev[currentSession] === resolvedThinking
-          ? prev
-          : { ...prev, [currentSession]: resolvedThinking });
       }
 
       // For child sessions, resolve the actual model from cron payload or transcript
+      if (!currentSession) return;
       const sessionType = getSessionType(currentSession);
+      if (sessionType === 'main') return;
+
+      let resolvedModel: string | null = null;
+
       if (sessionType === 'cron') {
         // Cron parent: look up the job's payload.model
         const jobIdMatch = currentSession.match(/:cron:([^:]+)$/);
@@ -387,6 +315,18 @@ export function useModelEffort(): UseModelEffortReturn {
             }
           } catch { /* ignore */ }
         }
+      } else {
+        // Cron-run or subagent: read model from session transcript
+        const parts = currentSession.split(':');
+        const sessionId = parts[parts.length - 1];
+        if (sessionId && /^[0-9a-f-]{36}$/.test(sessionId)) {
+          try {
+            const res = await fetch(`/api/sessions/${sessionId}/model`);
+            if (signal.cancelled) return;
+            const data = await res.json() as { ok: boolean; model?: string | null; missing?: boolean };
+            if (data.ok && data.model != null) resolvedModel = data.model;
+          } catch { /* ignore */ }
+        }
       }
 
       if (resolvedModel && !signal.cancelled) {
@@ -399,7 +339,7 @@ export function useModelEffort(): UseModelEffortReturn {
       console.warn('[useModelEffort] Failed to fetch session info:', err);
     });
     return () => { signal.cancelled = true; };
-  }, [currentSession, modelOptionsList]);
+  }, [currentSession, currentSessionThinking, modelOptionsList]);
 
   const controlsDisabled = connectionState !== 'connected' || !currentSession;
 
@@ -426,44 +366,26 @@ export function useModelEffort(): UseModelEffortReturn {
       confirmTimerRef.current = null;
     }
 
-    const selectingInheritedPrimary = nextInput === INHERITED_MODEL_VALUE;
-    let patchModel: string | null = selectingInheritedPrimary ? null : next;
-
     try {
       let wsSucceeded = false;
 
       // Attempt 1: WS RPC (fast path)
       try {
-        await rpc('sessions.patch', { key: currentSession, model: patchModel });
+        await rpc('sessions.patch', { key: currentSession, model: next });
         wsSucceeded = true;
       } catch (patchErr) {
-        // For inherited-default model selection, some gateways may reject null model.
-        // In that case, fall back to explicitly setting the configured primary model ID.
-        if (selectingInheritedPrimary && primaryModelId) {
+        // Attempt 2: Cross-provider fallback via WS
+        const nextBase = baseModelName(next);
+        const alt = modelOptionsList.find(m => m.id !== next && baseModelName(m.id) === nextBase);
+        if (alt) {
           try {
-            await rpc('sessions.patch', { key: currentSession, model: primaryModelId });
-            patchModel = primaryModelId;
+            await rpc('sessions.patch', { key: currentSession, model: alt.id });
+            next = alt.id;
+            setSelectedModel(next);
+            try { localStorage.setItem(MODEL_KEY, next); } catch { /* ignore */ }
             wsSucceeded = true;
           } catch {
-            // Keep failing through to HTTP fallback.
-          }
-        }
-
-        // Attempt 2: Cross-provider fallback via WS
-        if (!wsSucceeded && !selectingInheritedPrimary) {
-          const nextBase = baseModelName(next);
-          const alt = modelOptionsList.find(m => m.id !== next && baseModelName(m.id) === nextBase);
-          if (alt) {
-            try {
-              await rpc('sessions.patch', { key: currentSession, model: alt.id });
-              next = alt.id;
-              patchModel = alt.id;
-              setSelectedModel(next);
-              try { localStorage.setItem(MODEL_KEY, next); } catch { /* ignore */ }
-              wsSucceeded = true;
-            } catch {
-              // WS completely broken — fall through to HTTP
-            }
+            // WS completely broken — fall through to HTTP
           }
         }
 
@@ -474,14 +396,10 @@ export function useModelEffort(): UseModelEffortReturn {
 
       // Attempt 3: HTTP fallback (reliable path via session_status tool)
       if (!wsSucceeded) {
-        const fallbackModel = selectingInheritedPrimary ? (primaryModelId || model || null) : patchModel;
-        if (!fallbackModel) {
-          throw new Error('No primary model is available to apply inherited default model state');
-        }
         const res = await fetch('/api/gateway/session-patch', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionKey: currentSession, model: fallbackModel }),
+          body: JSON.stringify({ sessionKey: currentSession, model: next }),
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({})) as { error?: string };
@@ -492,10 +410,7 @@ export function useModelEffort(): UseModelEffortReturn {
       // Optimistically update the session object so that
       // SessionContext.refreshSessions() doesn't overwrite with stale data
       if (currentSession) {
-        const optimisticModel = selectingInheritedPrimary
-          ? (primaryModelId || patchModel || model || undefined)
-          : (patchModel || next);
-        updateSession(currentSession, { model: optimisticModel });
+        updateSession(currentSession, { model: next });
       }
 
       // Schedule a confirmation poll to verify the change took effect
@@ -504,17 +419,13 @@ export function useModelEffort(): UseModelEffortReturn {
         try {
           const info = await fetchGatewaySessionInfo(currentSession || undefined);
           if (info?.model) {
-            if (modelRefsMatch(info.model, primaryModelId, modelOptionsList)) {
-              setSelectedModel(INHERITED_MODEL_VALUE);
-            } else {
-              const infoBase = baseModelName(info.model);
-              const confirmed = modelOptionsList.find(m =>
-                m.id === info.model || m.label === info.model ||
-                baseModelName(m.id) === infoBase || m.id.endsWith('/' + info.model)
-              );
-              if (confirmed) {
-                setSelectedModel(confirmed.id);
-              }
+            const infoBase = baseModelName(info.model);
+            const confirmed = modelOptionsList.find(m =>
+              m.id === info.model || m.label === info.model ||
+              baseModelName(m.id) === infoBase || m.id.endsWith('/' + info.model)
+            );
+            if (confirmed) {
+              setSelectedModel(confirmed.id);
             }
           }
         } catch {
@@ -531,21 +442,20 @@ export function useModelEffort(): UseModelEffortReturn {
       try { localStorage.setItem(MODEL_KEY, prev); } catch { /* ignore */ }
       setUiError(`Model: ${errMsg}`);
     }
-  }, [controlsDisabled, selectedModel, rpc, currentSession, updateSession, modelOptionsList, primaryModelId, model]);
+  }, [controlsDisabled, selectedModel, rpc, currentSession, updateSession, modelOptionsList]);
 
   const handleEffortChange = useCallback(async (next: string) => {
     if (controlsDisabled) return;
     setUiError(null);
 
     const prev = selectedEffort;
-    const nextEffort = next as EffortSelection;
+    const nextEffort = next as EffortLevel;
     setSelectedEffort(nextEffort);
     effortLockUntilRef.current = Date.now() + OPTIMISTIC_LOCK_MS;
     try { localStorage.setItem(getEffortKey(currentSession), nextEffort); } catch { /* ignore */ }
 
     try {
-      const isInheritedDefault = nextEffort === INHERITED_EFFORT_VALUE;
-      const thinkingValue = isInheritedDefault ? null : nextEffort;
+      const thinkingValue = nextEffort === 'off' ? null : nextEffort;
       try {
         await rpc('sessions.patch', { key: currentSession, thinkingLevel: thinkingValue });
       } catch (wsErr) {
@@ -556,9 +466,7 @@ export function useModelEffort(): UseModelEffortReturn {
         await rpc('sessions.patch', { key: currentSession, thinkingLevel: thinkingValue });
       }
       if (currentSession) {
-        updateSession(currentSession, {
-          thinkingLevel: isInheritedDefault ? undefined : nextEffort,
-        });
+        updateSession(currentSession, { thinkingLevel: nextEffort });
       }
       setTimeout(() => { effortLockUntilRef.current = 0; }, CONFIRM_POLL_DELAY_MS);
     } catch (err) {
@@ -571,22 +479,14 @@ export function useModelEffort(): UseModelEffortReturn {
     }
   }, [controlsDisabled, selectedEffort, rpc, currentSession, updateSession]);
 
-  const modelOptions = useMemo(() => {
-    const configured = modelOptionsList.map((m) => ({ value: m.id, label: m.label }));
-    return [{ value: INHERITED_MODEL_VALUE, label: INHERITED_MODEL_VALUE }, ...configured];
-  }, [modelOptionsList]);
+  const modelOptions = useMemo(
+    () => modelOptionsList.map((m) => ({ value: m.id, label: m.label })),
+    [modelOptionsList],
+  );
 
   const effortOptions = useMemo(
-    () => [
-      {
-        value: INHERITED_EFFORT_VALUE,
-        label: inheritedEffortLabel === INHERITED_EFFORT_VALUE
-          ? 'default'
-          : `${inheritedEffortLabel} (default)`,
-      },
-      ...EFFORT_OPTIONS.map((lvl) => ({ value: lvl, label: lvl })),
-    ],
-    [inheritedEffortLabel],
+    () => EFFORT_OPTIONS.map((lvl) => ({ value: lvl, label: lvl })),
+    [],
   );
 
   return {
@@ -594,7 +494,6 @@ export function useModelEffort(): UseModelEffortReturn {
     effortOptions,
     selectedModel,
     selectedEffort,
-    selectedEffortLabel,
     handleModelChange,
     handleEffortChange,
     controlsDisabled,

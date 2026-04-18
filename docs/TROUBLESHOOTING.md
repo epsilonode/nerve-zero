@@ -15,7 +15,7 @@ Common issues and solutions for Nerve.
 2. You're trying the gateway token but `GATEWAY_TOKEN` isn't set in `.env`
 
 **Fix:**
-- Re-run `npm run setup` to set a new password
+- Re-run `bun run setup` to set a new password
 - Or set `NERVE_AUTH=true` with a valid `GATEWAY_TOKEN` — the gateway token works as a fallback password without needing a password hash
 
 ### Session expired / redirected to login
@@ -72,16 +72,16 @@ echo "NERVE_AUTH=false" >> .env
 }
 ```
 
-### `npm run build:server` produces nothing
+### `bun run build:server` produces nothing
 
-**Symptom:** `server-dist/` is empty or `npm start` fails with "Cannot find module".
+**Symptom:** `server-dist/` is empty or `bun run start:built` fails with "Cannot find module".
 
 **Cause:** Server TypeScript is compiled separately via `tsc -p config/tsconfig.server.json`.
 
 **Fix:**
 ```bash
-npm run build:server   # Compiles server/ → server-dist/
-npm start              # Then runs node server-dist/index.js
+bun run build:server   # Compiles server/ → server-dist/
+bun run start:built    # Then runs bun server-dist/index.js
 ```
 
 ### Chunk size warnings during `vite build`
@@ -101,7 +101,7 @@ npm start              # Then runs node server-dist/index.js
 # Find what's using the port
 lsof -i :3080
 # Kill it, or use a different port:
-PORT=3090 npm start
+PORT=3090 bun start
 ```
 
 The server detects `EADDRINUSE` and exits with a clear error (see `server/index.ts`).
@@ -120,8 +120,8 @@ The server detects `EADDRINUSE` and exits with a clear error (see `server/index.
 3. Token mismatch between Nerve server config and gateway
 
 **Fix:**
-- Verify the gateway is running: `openclaw gateway status`
-- Check token: the server reads `GATEWAY_TOKEN` or `OPENCLAW_GATEWAY_TOKEN` env var
+- Verify the gateway is running: `ZeroClaw gateway status`
+- Check token: the server reads `GATEWAY_TOKEN` or `ZeroClaw_GATEWAY_TOKEN` env var
 - For trusted official-gateway access, `/api/connect-defaults` advertises `serverSideAuth=true` and Nerve connects with an empty browser-side token
 - For custom gateway URLs or untrusted access, enter the token manually in the connection dialog
 
@@ -142,7 +142,7 @@ curl http://127.0.0.1:3080/health
 ```
 
 **Fix:**
-- If gateway is unreachable, restart it: `openclaw gateway restart`
+- If gateway is unreachable, restart it: `ZeroClaw gateway restart`
 - If persistent, check firewall rules or network configuration
 - If a stale manual token is saved in `localStorage`, clear `oc-config` and reload before reconnecting
 
@@ -168,18 +168,16 @@ curl http://127.0.0.1:3080/health
 
 **Symptom:** UI shows "connected" but sessions/messages don't update.
 
-**Cause:** The WS proxy (`server/lib/ws-proxy.ts`) might not be injecting device identity correctly, so the gateway doesn't grant `operator.read`/`operator.write` scopes.
+**Cause:** The browser may be connected to Nerve, but Nerve may still be missing a valid ZeroClaw bearer token or targeting the wrong `/ws/chat` endpoint.
 
 **Diagnosis:**
-- Check server logs for `[ws-proxy] Injected device identity: ...`
-- If missing, the device identity file may be corrupted
+- Confirm the handshake screen is using `ws://127.0.0.1:<port>/ws/chat`
+- Confirm the token starts with `zc_`
+- Check for `session_start` in browser/server websocket logs
 
 **Fix:**
-```bash
-# Remove and regenerate device identity
-rm ~/.nerve/device-identity.json
-# Restart Nerve — a new keypair will be generated
-```
+- Re-pair with `POST /pair` to get a fresh bearer token
+- Reconnect using the returned `zc_...` token
 
 ### "Target not allowed" WebSocket error
 
@@ -189,14 +187,14 @@ rm ~/.nerve/device-identity.json
 
 **Fix:** By default, only `127.0.0.1`, `localhost`, and `::1` are allowed. To add a custom host:
 ```bash
-WS_ALLOWED_HOSTS=mygateway.local npm start
+WS_ALLOWED_HOSTS=mygateway.local bun start
 ```
 
 ### Workspace panels fail with `origin not allowed`
 
 **Symptom:** Chat connects, but remote workspace panels like Files, Memory, Config, or Skills fail with gateway `origin not allowed` errors.
 
-**Cause:** Those panels can use the server-side gateway RPC fallback, which opens its own WebSocket to the gateway. If Nerve does not know its real browser-facing origin, that fallback can present the wrong origin even though the browser chat path is already working.
+**Cause:** Those panels can still hit server-side gateway HTTP tools or websocket proxy paths. If Nerve does not know its real browser-facing origin, the gateway can reject the upstream origin even when local chat already works.
 
 **Fix:** Set the exact browser origin in `.env` and allow the same origin on the gateway:
 
@@ -206,13 +204,13 @@ NERVE_PUBLIC_ORIGIN=https://nerve.example.com
 
 Also add `https://nerve.example.com` to `gateway.controlUi.allowedOrigins`, then restart both Nerve and the gateway.
 
-### "device token mismatch" on WebSocket connect
+### Token mismatch on WebSocket connect
 
-**Symptom:** Server logs show `[ws-proxy] Gateway closed: code=1008, reason=unauthorized: device token mismatch`.
+**Symptom:** Server logs show gateway auth failure or the handshake loops without reaching `session_start`.
 
 **Causes:**
 1. **Stale browser config.** The browser may still have an old manually-entered token saved in `localStorage` (`oc-config`), often from an older build or a custom gateway connection.
-2. **Token mismatch across config files.** OpenClaw 2026.2.19 has a known bug where `openclaw onboard` writes different tokens to the systemd service file and `openclaw.json`. The gateway uses the systemd env var; Nerve reads from `.env`.
+2. **Token mismatch across config files.** ZeroClaw 2026.2.19 has a known bug where `ZeroClaw onboard` writes different tokens to the systemd service file and `ZeroClaw.json`. The gateway uses the systemd env var; Nerve reads from `.env`.
 
 **Fix (stale browser config):**
 Clear site data or remove `localStorage.oc-config`, then reload so the official managed gateway path can reconnect with an empty token.
@@ -220,16 +218,16 @@ Clear site data or remove `localStorage.oc-config`, then reload so the official 
 **Fix (token mismatch):**
 Re-run the setup wizard — it reads the real token from the systemd service file and aligns everything:
 ```bash
-npm run setup
+bun run setup
 ```
 
 If you need to check manually:
 ```bash
 # The gateway's actual token (source of truth)
-grep OPENCLAW_GATEWAY_TOKEN ~/.config/systemd/user/openclaw-gateway.service
+grep ZeroClaw_GATEWAY_TOKEN ~/.config/systemd/user/ZeroClaw-gateway.service
 
 # These must all match:
-grep gateway.auth.token ~/.openclaw/openclaw.json     # CLI config
+grep gateway.auth.token ~/.ZeroClaw/ZeroClaw.json     # CLI config
 grep GATEWAY_TOKEN .env                                 # Nerve config
 ```
 
@@ -237,20 +235,9 @@ grep GATEWAY_TOKEN .env                                 # Nerve config
 
 **Symptom:** Chat sends but responses fail with "missing scope" or tool calls are rejected.
 
-**Cause:** The gateway didn't grant `operator.read`/`operator.write` scopes. This happens when:
-1. The device hasn't been approved yet (first connection)
-2. The device was rejected or the gateway was reset
+**Cause:** The gateway token is invalid, expired, or does not match the currently running gateway.
 
-**Fix:** Re-run `npm run setup` — it bootstraps device scopes automatically. If that doesn't work:
-```bash
-# Check pending devices
-openclaw devices list
-
-# Approve the Nerve device
-openclaw devices approve <requestId>
-```
-
-After approval, reconnect from the browser (refresh the page or click reconnect).
+**Fix:** Generate a fresh pair code, exchange it at `/pair`, and reconnect with the returned `zc_...` token.
 
 ### Cron tab says "Tool not available: cron"
 
@@ -263,7 +250,7 @@ After approval, reconnect from the browser (refresh the page or click reconnect)
 ["cron", "gateway", "sessions_spawn"]
 ```
 
-If Nerve and the gateway are on the same machine, re-running `npm run setup` can patch it for you.
+If Nerve and the gateway are on the same machine, re-running `bun run setup` can patch it for you.
 
 ### Messages buffered indefinitely
 
@@ -426,7 +413,7 @@ If Nerve and the gateway are on the same machine, re-running `npm run setup` can
 **Fix:** Check and set the correct path:
 ```bash
 # In .env
-MEMORY_PATH=/path/to/.openclaw/workspace/MEMORY.md
+MEMORY_PATH=/path/to/.ZeroClaw/workspace/MEMORY.md
 ```
 
 ---
@@ -459,7 +446,7 @@ MEMORY_PATH=/path/to/.openclaw/workspace/MEMORY.md
 **Fix:**
 - Make sure the selected root agent exists and is healthy
 - Check whether that root is already busy with another task
-- Inspect gateway logs for `sessions.create`, `sessions.send`, or `sessions_spawn` failures
+- Inspect gateway logs for `sessions_spawn` failures or missing child-session state updates
 - Refresh sessions and retry after gateway reconnects if the session tree looks stale
 
 ### Kanban task execution cannot attach to a worker
@@ -467,17 +454,17 @@ MEMORY_PATH=/path/to/.openclaw/workspace/MEMORY.md
 **Symptom:** A Kanban task enters `in-progress`, but no worker session links up cleanly, the task never reaches `review`, or the parent root never gets the completion update.
 
 **Cause:** Kanban has two execution paths now:
-- **Assigned tasks** create a real child session beneath the assignee's live root via `sessions.create(parentSessionKey=...)`, then send the task with `sessions.send`.
+- **Assigned tasks** launch a worker via the current session-spawn path and then track it through ZeroClaw's local session store.
 - **Unassigned or `operator` tasks** use the normal `sessions_spawn` path.
 
-That means failures can come from a missing assignee root, a child-session create/send failure, the normal `sessions_spawn` path, or a stalled completion poller. On macOS, unassigned or `operator` tasks are rejected outright and must be assigned to a live worker root first.
+That means failures can come from a missing assignee root, a failed `sessions_spawn`, or a stalled completion poller. On macOS, unassigned or `operator` tasks are rejected outright and must be assigned to a live worker root first.
 
 **Fix:**
 - If the task is assigned, make sure that assignee's root session exists and is healthy
 - If the task is unassigned, verify the normal `sessions_spawn` path is working
 - On macOS, assign the task to a live worker root before executing it
-- Check gateway RPC/session logs for the assignee-root path, and HTTP tool logs for the normal spawn path
-- If the child session finishes but the parent root never updates, inspect gateway RPC logs and recent session events for the parent-report step
+- Check local ZeroClaw session-store updates and `sessions_spawn` tool logs
+- Parent-root completion reporting is no longer driven by the old gateway RPC path
 - If the worker never appears in the session list, inspect gateway connectivity and recent session events first
 
 ### Session status stuck on "THINKING"
@@ -499,11 +486,11 @@ That means failures can come from a missing assignee root, a child-session creat
 
 **Symptom:** Model selector is empty or shows only the current model.
 
-**Cause:** Models are fetched via `GET /api/gateway/models`, which reads the active OpenClaw config. If that config is unreadable, or it has no configured models, the dropdown can stay empty or sparse.
+**Cause:** Models are fetched via `GET /api/gateway/models`, which reads the active ZeroClaw config. If that config is unreadable, or it has no configured models, the dropdown can stay empty or sparse.
 
 **Fix:**
-- Verify the expected models are configured in OpenClaw (`agents.defaults.model` / `agents.defaults.models`)
-- Check that Nerve can read the active OpenClaw config file
+- Verify the expected models are configured in ZeroClaw (`agents.defaults.model` / `agents.defaults.models`)
+- Check that Nerve can read the active ZeroClaw config file
 - Check server logs for `gateway/models` read errors
 - After fixing config, reopen the spawn dialog or refresh the page
 
@@ -573,7 +560,7 @@ The server auto-detects cert files at `certs/cert.pem` and `certs/key.pem`. No c
 
 ## Development
 
-### `npm run dev` — proxy errors
+### `bun run dev` — proxy errors
 
 **Symptom:** API requests fail with 502 during development.
 
@@ -582,10 +569,10 @@ The server auto-detects cert files at `certs/cert.pem` and `certs/key.pem`. No c
 **Fix:** Run both servers:
 ```bash
 # Terminal 1
-npm run dev:server   # Backend on port 3081
+bun run dev:server   # Backend on port 3081
 
 # Terminal 2
-npm run dev          # Frontend on port 3080 (proxies to 3081)
+bun run dev          # Frontend on port 3080 (proxies to 3081)
 ```
 
 ### Tests fail with "Cannot find module"
@@ -616,7 +603,7 @@ See [docs/UPDATING.md](UPDATING.md) for the full updater reference.
 
 ### "No semver tags found on remote"
 
-**Symptom:** `npm run update` fails at version resolution (exit 20).
+**Symptom:** `bun run update` fails at version resolution (exit 20).
 
 **Cause:** No tags on the remote, or git can't reach origin.
 
@@ -660,7 +647,7 @@ curl http://127.0.0.1:3080/api/version   # Verify version
 ```bash
 cat ~/.nerve/updater/last-good.json       # Get snapshot ref
 git checkout --force <ref>
-npm install && npm run build && npm run build:server
+bun install && bun run build && bun run build:server
 systemctl restart nerve
 ```
 

@@ -16,10 +16,9 @@ import { broadcast } from '../routes/events.js';
 import { config } from './config.js';
 import { resolveAgentWorkspace, type AgentWorkspace } from './agent-workspace.js';
 import { isBinary, isExcluded } from './file-utils.js';
-import { listConfiguredAgentWorkspaces, resolveOpenClawConfigPath } from './openclaw-config.js';
 import { isWorkspaceLocal } from './workspace-detect.js';
 
-const rootDirWatchers = new Map<string, FSWatcher>();
+let rootDirWatcher: FSWatcher | null = null;
 const memoryWatchers = new Map<string, FSWatcher>();
 const memoryDirWatchers = new Map<string, FSWatcher>();
 const workspaceWatchers = new Map<string, FSWatcher>();
@@ -74,22 +73,12 @@ function discoverWorkspaces(): AgentWorkspace[] {
   const mainWorkspace = resolveAgentWorkspace('main');
   workspaces.set(mainWorkspace.agentId, mainWorkspace);
 
-  for (const configured of listConfiguredAgentWorkspaces()) {
-    if (configured.agentId === 'main') continue;
-    workspaces.set(configured.agentId, {
-      agentId: configured.agentId,
-      workspaceRoot: configured.workspaceRoot,
-      memoryPath: path.join(configured.workspaceRoot, 'MEMORY.md'),
-      memoryDir: path.join(configured.workspaceRoot, 'memory'),
-    });
-  }
-
-  const openclawDir = path.join(config.home, '.openclaw');
-  if (!existsSync(openclawDir)) {
+  const ZeroClawDir = path.join(config.home, '.ZeroClaw');
+  if (!existsSync(ZeroClawDir)) {
     return [...workspaces.values()];
   }
 
-  for (const entry of readdirSync(openclawDir, { withFileTypes: true })) {
+  for (const entry of readdirSync(ZeroClawDir, { withFileTypes: true })) {
     if (!entry.isDirectory() || !entry.name.startsWith(WORKSPACE_PREFIX)) continue;
 
     const rawAgentId = entry.name.slice(WORKSPACE_PREFIX.length);
@@ -200,36 +189,17 @@ function refreshWorkspaceWatchers(): void {
 }
 
 function startRootWorkspaceWatcher(): void {
-  const openclawDir = path.join(config.home, '.openclaw');
-  if (rootDirWatchers.size > 0) return;
+  const ZeroClawDir = path.join(config.home, '.ZeroClaw');
+  if (rootDirWatcher || !existsSync(ZeroClawDir)) return;
 
   try {
-    const configPath = resolveOpenClawConfigPath();
-    const configDir = path.dirname(configPath);
-    const configBasename = path.basename(configPath);
-    const watchTargets = new Set<string>();
-
-    if (existsSync(openclawDir)) watchTargets.add(openclawDir);
-    if (existsSync(configDir)) watchTargets.add(configDir);
-
-    for (const watchTarget of watchTargets) {
-      const watcher = watch(watchTarget, (_eventType, filename) => {
-        const file = getWatchFilename(filename);
-        if (!file) return;
-
-        const isConfigUpdate = watchTarget === configDir && file === configBasename;
-        const isWorkspaceDiscovery = watchTarget === openclawDir && (
-          file === 'workspace' ||
-          file.startsWith(WORKSPACE_PREFIX)
-        );
-
-        if (isConfigUpdate || isWorkspaceDiscovery) {
-          refreshWorkspaceWatchers();
-        }
-      });
-
-      rootDirWatchers.set(watchTarget, watcher);
-    }
+    rootDirWatcher = watch(ZeroClawDir, (_eventType, filename) => {
+      const file = getWatchFilename(filename);
+      if (!file) return;
+      if (file === 'workspace' || file.startsWith(WORKSPACE_PREFIX)) {
+        refreshWorkspaceWatchers();
+      }
+    });
   } catch (err) {
     console.warn('[file-watcher] Failed to watch workspace root for new agent workspaces:', (err as Error).message);
   }
@@ -268,7 +238,8 @@ export async function startFileWatcher(): Promise<void> {
  * Call this during graceful shutdown.
  */
 export function stopFileWatcher(): void {
-  closeWatchers(rootDirWatchers);
+  rootDirWatcher?.close();
+  rootDirWatcher = null;
   closeWatchers(memoryWatchers);
   closeWatchers(memoryDirWatchers);
   closeWatchers(workspaceWatchers);

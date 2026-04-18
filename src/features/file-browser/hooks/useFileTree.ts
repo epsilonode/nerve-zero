@@ -98,15 +98,14 @@ function findEntry(entries: TreeEntry[], targetPath: string): TreeEntry | null {
   return null;
 }
 
-function buildTreeUrl(dirPath: string, agentId: string, showHiddenEntries: boolean): string {
+function buildTreeUrl(dirPath: string, agentId: string): string {
   const params = new URLSearchParams({ depth: '1', agentId });
-  if (showHiddenEntries) params.set('showHidden', 'true');
   if (dirPath) params.set('path', dirPath);
   return `/api/files/tree?${params.toString()}`;
 }
 
 /** Hook for managing file tree state with workspace info and persistence. */
-export function useFileTree(agentId = DEFAULT_AGENT_ID, showHiddenEntries = false) {
+export function useFileTree(agentId = DEFAULT_AGENT_ID) {
   const scopedAgentId = normalizeAgentId(agentId);
   const [entries, setEntries] = useState<TreeEntry[]>([]);
   const entriesRef = useRef<TreeEntry[]>([]);
@@ -159,7 +158,7 @@ export function useFileTree(agentId = DEFAULT_AGENT_ID, showHiddenEntries = fals
     requestAgentId = agentIdRef.current,
   ): Promise<TreeEntry[] | null> => {
     try {
-      const res = await fetch(buildTreeUrl(dirPath, requestAgentId, showHiddenEntries));
+      const res = await fetch(buildTreeUrl(dirPath, requestAgentId));
       if (!res.ok) {
         if (dirPath && (res.status === 400 || res.status === 404) && agentIdRef.current === requestAgentId) {
           setExpandedPaths((prev) => {
@@ -185,7 +184,7 @@ export function useFileTree(agentId = DEFAULT_AGENT_ID, showHiddenEntries = fals
     } catch {
       return null;
     }
-  }, [showHiddenEntries]);
+  }, []);
 
   // Initial load and agent changes
   const loadRoot = useCallback(async (targetAgentId = scopedAgentId) => {

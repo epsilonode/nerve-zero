@@ -35,10 +35,12 @@ describe('useConnectionManager', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
-        wsUrl: 'ws://127.0.0.1:18789/ws',
+        wsUrl: 'ws://127.0.0.1:18789/ws/chat',
         token: null,
         authEnabled: true,
         serverSideAuth: true,
+        gatewayReachable: true,
+        handshakeRequired: false,
       }),
     });
 
@@ -49,17 +51,17 @@ describe('useConnectionManager', () => {
       expect(connectMock).toHaveBeenCalledTimes(1);
     });
 
-    expect(connectMock).toHaveBeenCalledWith('ws://127.0.0.1:18789/ws', '');
+    expect(connectMock).toHaveBeenCalledWith('ws://127.0.0.1:18789/ws/chat', '');
     expect(result.current.serverSideAuth).toBe(true);
   });
 
   it('shows the official gateway url in the UI even when a stale custom saved URL exists', async () => {
     const { loadConfig } = await import('../contexts/GatewayContext');
-    vi.mocked(loadConfig).mockReturnValue({ url: 'ws://custom.host:1234/ws', token: 'saved-token' });
+    vi.mocked(loadConfig).mockReturnValue({ url: 'ws://custom.host:1234/ws/chat', token: 'saved-token' });
 
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ wsUrl: 'ws://default:1234/ws', serverSideAuth: true }),
+      json: async () => ({ wsUrl: 'ws://default:1234/ws/chat', serverSideAuth: true, gatewayReachable: true, handshakeRequired: false }),
     });
 
     const mod = await import('./useConnectionManager');
@@ -70,76 +72,76 @@ describe('useConnectionManager', () => {
     });
 
     expect(connectMock).not.toHaveBeenCalled();
-    expect(result.current.editableUrl).toBe('ws://default:1234/ws');
+    expect(result.current.editableUrl).toBe('ws://default:1234/ws/chat');
     expect(result.current.editableToken).toBe('');
   });
 
   it('keeps a manually saved token when the official url changes but server-side auth is unavailable', async () => {
     const { loadConfig } = await import('../contexts/GatewayContext');
-    vi.mocked(loadConfig).mockReturnValue({ url: 'ws://custom.host:1234/ws', token: 'saved-token' });
+    vi.mocked(loadConfig).mockReturnValue({ url: 'ws://custom.host:1234/ws/chat', token: 'saved-token' });
 
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ wsUrl: 'ws://default:1234/ws', serverSideAuth: false }),
+      json: async () => ({ wsUrl: 'ws://default:1234/ws/chat', serverSideAuth: false, gatewayReachable: true, handshakeRequired: true }),
     });
 
     const mod = await import('./useConnectionManager');
     const { result } = renderHook(() => mod.useConnectionManager());
 
     await waitFor(() => {
-      expect(result.current.officialUrl).toBe('ws://default:1234/ws');
+      expect(result.current.officialUrl).toBe('ws://default:1234/ws/chat');
     });
 
     expect(connectMock).not.toHaveBeenCalled();
-    expect(result.current.editableUrl).toBe('ws://default:1234/ws');
+    expect(result.current.editableUrl).toBe('ws://default:1234/ws/chat');
     expect(result.current.editableToken).toBe('saved-token');
   });
 
   it('auto-connects if saved URL matches official URL but token is missing (Managed Upgrade)', async () => {
     const { loadConfig } = await import('../contexts/GatewayContext');
-    vi.mocked(loadConfig).mockReturnValue({ url: 'ws://official:18789/ws', token: '' });
+    vi.mocked(loadConfig).mockReturnValue({ url: 'ws://official:18789/ws/chat', token: '' });
 
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ wsUrl: 'ws://official:18789/ws', serverSideAuth: true }),
+      json: async () => ({ wsUrl: 'ws://official:18789/ws/chat', serverSideAuth: true, gatewayReachable: true, handshakeRequired: false }),
     });
 
     const mod = await import('./useConnectionManager');
     renderHook(() => mod.useConnectionManager());
 
     await waitFor(() => {
-      expect(connectMock).toHaveBeenCalledWith('ws://official:18789/ws', '');
+      expect(connectMock).toHaveBeenCalledWith('ws://official:18789/ws/chat', '');
     });
   });
 
   it('auto-connects and clears stale saved token when saved URL is the official loopback alias', async () => {
     const { loadConfig, saveConfig } = await import('../contexts/GatewayContext');
-    vi.mocked(loadConfig).mockReturnValue({ url: 'ws://localhost:18789/ws', token: 'stale-token' });
+    vi.mocked(loadConfig).mockReturnValue({ url: 'ws://localhost:18789/ws/chat', token: 'stale-token' });
 
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ wsUrl: 'ws://127.0.0.1:18789/ws', serverSideAuth: true }),
+      json: async () => ({ wsUrl: 'ws://127.0.0.1:18789/ws/chat', serverSideAuth: true, gatewayReachable: true, handshakeRequired: false }),
     });
 
     const mod = await import('./useConnectionManager');
     const { result } = renderHook(() => mod.useConnectionManager());
 
     await waitFor(() => {
-      expect(connectMock).toHaveBeenCalledWith('ws://127.0.0.1:18789/ws', '');
+      expect(connectMock).toHaveBeenCalledWith('ws://127.0.0.1:18789/ws/chat', '');
     });
 
-    expect(saveConfig).toHaveBeenCalledWith('ws://127.0.0.1:18789/ws', '');
-    expect(result.current.editableUrl).toBe('ws://127.0.0.1:18789/ws');
+    expect(saveConfig).toHaveBeenCalledWith('ws://127.0.0.1:18789/ws/chat', '');
+    expect(result.current.editableUrl).toBe('ws://127.0.0.1:18789/ws/chat');
     expect(result.current.editableToken).toBe('');
   });
 
   it('forces empty token on reconnect when serverSideAuth is active for official URL', async () => {
     const { loadConfig, saveConfig } = await import('../contexts/GatewayContext');
-    vi.mocked(loadConfig).mockReturnValue({ url: 'ws://official:18789/ws', token: 'stale-token' });
+    vi.mocked(loadConfig).mockReturnValue({ url: 'ws://official:18789/ws/chat', token: 'stale-token' });
 
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ wsUrl: 'ws://official:18789/ws', serverSideAuth: true }),
+      json: async () => ({ wsUrl: 'ws://official:18789/ws/chat', serverSideAuth: true, gatewayReachable: true, handshakeRequired: false }),
     });
 
     const mod = await import('./useConnectionManager');
@@ -153,18 +155,18 @@ describe('useConnectionManager', () => {
       await result.current.handleReconnect();
     });
 
-    expect(saveConfig).toHaveBeenCalledWith('ws://official:18789/ws', '');
-    expect(connectMock).toHaveBeenCalledWith('ws://official:18789/ws', '');
+    expect(saveConfig).toHaveBeenCalledWith('ws://official:18789/ws/chat', '');
+    expect(connectMock).toHaveBeenCalledWith('ws://official:18789/ws/chat', '');
     expect(result.current.editableToken).toBe('');
   });
 
   it('treats loopback aliases as the official gateway during reconnect', async () => {
     const { loadConfig, saveConfig } = await import('../contexts/GatewayContext');
-    vi.mocked(loadConfig).mockReturnValue({ url: 'ws://localhost:18789/ws', token: 'stale-token' });
+    vi.mocked(loadConfig).mockReturnValue({ url: 'ws://localhost:18789/ws/chat', token: 'stale-token' });
 
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ wsUrl: 'ws://127.0.0.1:18789/ws', serverSideAuth: true }),
+      json: async () => ({ wsUrl: 'ws://127.0.0.1:18789/ws/chat', serverSideAuth: true, gatewayReachable: true, handshakeRequired: false }),
     });
 
     const mod = await import('./useConnectionManager');
@@ -181,9 +183,32 @@ describe('useConnectionManager', () => {
       await result.current.handleReconnect();
     });
 
-    expect(saveConfig).toHaveBeenCalledWith('ws://127.0.0.1:18789/ws', '');
-    expect(connectMock).toHaveBeenCalledWith('ws://127.0.0.1:18789/ws', '');
-    expect(result.current.editableUrl).toBe('ws://127.0.0.1:18789/ws');
+    expect(saveConfig).toHaveBeenCalledWith('ws://127.0.0.1:18789/ws/chat', '');
+    expect(connectMock).toHaveBeenCalledWith('ws://127.0.0.1:18789/ws/chat', '');
+    expect(result.current.editableUrl).toBe('ws://127.0.0.1:18789/ws/chat');
     expect(result.current.editableToken).toBe('');
+  });
+
+  it('does not auto-connect when the gateway is unreachable, preserving the handshake flow', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        wsUrl: 'ws://127.0.0.1:18789/ws/chat',
+        token: null,
+        serverSideAuth: true,
+        gatewayReachable: false,
+        handshakeRequired: true,
+      }),
+    });
+
+    const mod = await import('./useConnectionManager');
+    const { result } = renderHook(() => mod.useConnectionManager());
+
+    await waitFor(() => {
+      expect(result.current.officialUrl).toBe('ws://127.0.0.1:18789/ws/chat');
+    });
+
+    expect(connectMock).not.toHaveBeenCalled();
+    expect(result.current.dialogOpen).toBe(true);
   });
 });

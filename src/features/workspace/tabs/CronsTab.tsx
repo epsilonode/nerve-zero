@@ -460,7 +460,7 @@ export function CronsTab() {
                 <div className="space-y-1.5">
                   <div className="text-[0.7rem] font-medium uppercase tracking-[0.18em] text-foreground/80">Recommended fix</div>
                   <p className="text-[0.733rem] leading-4.5 text-muted-foreground">
-                    Ask your agent to update your OpenClaw config (<code>openclaw.json</code>) so <code>gateway.tools.allow</code> includes:
+                    Ask your agent to update your ZeroClaw config (<code>ZeroClaw.json</code>) so <code>gateway.tools.allow</code> includes:
                   </p>
                   <ul className="ml-5 list-disc space-y-1 text-[0.733rem] leading-4.5 text-muted-foreground">
                     {CRON_GATEWAY_TOOL_ALLOWLIST.map((tool) => (
@@ -473,7 +473,7 @@ export function CronsTab() {
                 <div className="space-y-1.5">
                   <div className="text-[0.7rem] font-medium uppercase tracking-[0.18em] text-foreground/80">Manual fix</div>
                   <p className="text-[0.733rem] leading-4.5 text-muted-foreground">
-                    Edit <code>openclaw.json</code> and add these entries to <code>gateway.tools.allow</code>:
+                    Edit <code>ZeroClaw.json</code> and add these entries to <code>gateway.tools.allow</code>:
                   </p>
                   <ul className="ml-5 list-disc space-y-1 text-[0.733rem] leading-4.5 text-muted-foreground">
                     {CRON_GATEWAY_TOOL_ALLOWLIST.map((tool) => (
@@ -486,7 +486,7 @@ export function CronsTab() {
                 <div className="space-y-1">
                   <div className="text-[0.7rem] font-medium uppercase tracking-[0.18em] text-foreground/80">Local install shortcut</div>
                   <p className="text-[0.733rem] leading-4.5 text-muted-foreground">
-                    If this is a local install, rerun <code>npm run setup</code> to restore the missing entries.
+                    If this is a local install, rerun <code>bun run setup</code> to restore the missing entries.
                   </p>
                 </div>
               </div>

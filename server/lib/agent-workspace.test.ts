@@ -10,7 +10,7 @@ describe('agent-workspace', () => {
   beforeEach(async () => {
     vi.resetModules();
     homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-workspace-test-'));
-    memoryPath = path.join(homeDir, '.openclaw', 'workspace', 'MEMORY.md');
+    memoryPath = path.join(homeDir, '.ZeroClaw', 'workspace', 'MEMORY.md');
   });
 
   afterEach(async () => {
@@ -52,50 +52,9 @@ describe('agent-workspace', () => {
 
     expect(resolveAgentWorkspace('research')).toEqual({
       agentId: 'research',
-      workspaceRoot: path.join(homeDir, '.openclaw', 'workspace-research'),
-      memoryPath: path.join(homeDir, '.openclaw', 'workspace-research', 'MEMORY.md'),
-      memoryDir: path.join(homeDir, '.openclaw', 'workspace-research', 'memory'),
-    });
-  });
-
-  it('prefers explicitly configured agent workspaces from openclaw.json', async () => {
-    const configDir = path.join(homeDir, '.openclaw');
-    await fs.mkdir(configDir, { recursive: true });
-    await fs.writeFile(path.join(configDir, 'openclaw.json'), JSON.stringify({
-      agents: {
-        defaults: { workspace: '/managed/workspaces' },
-        list: [
-          { id: 'research', workspace: '/vaults/research' },
-        ],
-      },
-    }, null, 2));
-
-    const { resolveAgentWorkspace } = await loadModule();
-
-    expect(resolveAgentWorkspace('research')).toEqual({
-      agentId: 'research',
-      workspaceRoot: '/vaults/research',
-      memoryPath: '/vaults/research/MEMORY.md',
-      memoryDir: '/vaults/research/memory',
-    });
-  });
-
-  it('uses agents.defaults.workspace for new non-main agents when configured', async () => {
-    const configDir = path.join(homeDir, '.openclaw');
-    await fs.mkdir(configDir, { recursive: true });
-    await fs.writeFile(path.join(configDir, 'openclaw.json'), JSON.stringify({
-      agents: {
-        defaults: { workspace: '/managed/workspaces' },
-      },
-    }, null, 2));
-
-    const { resolveAgentWorkspace } = await loadModule();
-
-    expect(resolveAgentWorkspace('research')).toEqual({
-      agentId: 'research',
-      workspaceRoot: '/managed/workspaces/research',
-      memoryPath: '/managed/workspaces/research/MEMORY.md',
-      memoryDir: '/managed/workspaces/research/memory',
+      workspaceRoot: path.join(homeDir, '.ZeroClaw', 'workspace-research'),
+      memoryPath: path.join(homeDir, '.ZeroClaw', 'workspace-research', 'MEMORY.md'),
+      memoryDir: path.join(homeDir, '.ZeroClaw', 'workspace-research', 'memory'),
     });
   });
 
@@ -104,7 +63,7 @@ describe('agent-workspace', () => {
 
     const workspace = resolveAgentWorkspace('research');
 
-    expect(workspace.workspaceRoot).toBe(path.join(homeDir, '.openclaw', 'workspace-research'));
+    expect(workspace.workspaceRoot).toBe(path.join(homeDir, '.ZeroClaw', 'workspace-research'));
     expect(workspace.memoryPath).toBe(path.join(workspace.workspaceRoot, 'MEMORY.md'));
     expect(workspace.memoryDir).toBe(path.join(workspace.workspaceRoot, 'memory'));
   });

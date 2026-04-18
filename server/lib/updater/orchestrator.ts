@@ -52,8 +52,7 @@ export async function orchestrate(options: UpdateOptions, reporter: Reporter): P
     reporter.stage('Preflight checks', stageNum, totalStages);
     const preflight = runPreflight(options.cwd);
     reporter.ok(`git ${preflight.gitVersion}`);
-    reporter.ok(`Node.js v${preflight.nodeVersion}`);
-    reporter.ok(`npm ${preflight.npmVersion}`);
+    reporter.ok(`bun v${preflight.bunVersion}`);
 
     // ── 3. Resolve version ─────────────────────────────────────────
     stageNum++;
@@ -116,7 +115,7 @@ export async function orchestrate(options: UpdateOptions, reporter: Reporter): P
     // ── 7. Build ───────────────────────────────────────────────────
     stageNum++;
     reporter.stage('Building', stageNum, totalStages);
-    reporter.verbose('npm install && npm run build && npm run build:server');
+    reporter.verbose('bun install && bun run build && bun run build:server');
     buildProject(options.cwd);
     reporter.ok('Build complete');
 
@@ -148,7 +147,7 @@ export async function orchestrate(options: UpdateOptions, reporter: Reporter): P
       } else {
         reporter.warn('No service manager detected — skipping restart');
         reporter.hint('Start the server manually:');
-        reporter.cmd('npm start');
+        reporter.cmd('bun start');
       }
 
       stageNum++;
@@ -220,8 +219,8 @@ async function handleFailure(
   if (stage === 'build') {
     reporter.hint('Troubleshooting:');
     reporter.cmd('npm install');
-    reporter.cmd('npm run build');
-    reporter.cmd('npm run build:server');
+    reporter.cmd('bun run build');
+    reporter.cmd('bun run build:server');
   } else if (stage === 'restart' || stage === 'health') {
     if (serviceManager) {
       reporter.hint('Check service logs:');

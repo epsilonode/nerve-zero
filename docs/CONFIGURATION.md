@@ -9,10 +9,10 @@ Nerve is configured via a `.env` file in the project root. All variables have se
 The interactive setup wizard is the recommended way to configure Nerve:
 
 ```bash
-npm run setup               # Interactive setup (6 steps)
-npm run setup -- --check    # Validate existing config & test gateway
-npm run setup -- --defaults # Non-interactive with auto-detected values
-npm run setup -- --help     # Show help
+bun run setup               # Interactive setup (6 steps)
+bun run setup -- --check    # Validate existing config & test gateway
+bun run setup -- --defaults # Non-interactive with auto-detected values
+bun run setup -- --help     # Show help
 ```
 
 ### Wizard Steps
@@ -21,15 +21,14 @@ The wizard walks through **6 sections**:
 
 #### 1. Gateway Connection
 
-Connects Nerve to your OpenClaw gateway. The wizard auto-detects the gateway token from:
+Connects Nerve to your ZeroClaw gateway. The wizard auto-detects the gateway token from:
 1. Existing `.env` (`GATEWAY_TOKEN`)
-2. Environment variable `OPENCLAW_GATEWAY_TOKEN`
-3. `~/.openclaw/openclaw.json` (auto-detected)
+2. Environment variable `ZeroClaw_GATEWAY_TOKEN`
+3. Active local ZeroClaw config / runtime state (auto-detected)
 
-Tests the connection before proceeding. If the gateway is unreachable, setup stops so you can fix the gateway or token first. On current OpenClaw builds, the wizard also:
-- Reads the real gateway token from the systemd service file (works around a known bug where `openclaw onboard` writes different tokens to systemd and `openclaw.json`)
-- Bootstraps `paired.json` and `device-auth.json` with full operator scopes if they don't exist yet
-- Pre-pairs Nerve's device identity in the normal setup path so it can connect without manual approval (`openclaw devices approve`)
+Tests the connection before proceeding. If the gateway is unreachable, setup stops so you can fix the gateway or token first. On current ZeroClaw builds, the wizard also:
+- Reads the real gateway token from the active local ZeroClaw installation when possible
+- Prepares the normal pair-code and browser-origin setup so the handshake flow completes cleanly
 - Adds `cron`, `gateway`, and `sessions_spawn` to `gateway.tools.allow` when they are missing
 - Restarts the gateway to apply changes
 
@@ -107,9 +106,9 @@ HOST=127.0.0.1
 
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `GATEWAY_TOKEN` | — | **Yes** | Authentication token for the OpenClaw gateway. The setup wizard auto-detects this. See note below |
+| `GATEWAY_TOKEN` | — | **Yes** | Authentication token for the ZeroClaw gateway. The setup wizard auto-detects this. See note below |
 | `GATEWAY_URL` | `http://127.0.0.1:18789` | No | Gateway HTTP endpoint URL |
-| `NERVE_PUBLIC_ORIGIN` | *(empty)* | No | Explicit browser-facing Nerve origin used when server-side gateway RPC fallback must open its own WebSocket to OpenClaw. Useful for reverse-proxy, cloud, and hybrid deployments. |
+| `NERVE_PUBLIC_ORIGIN` | *(empty)* | No | Explicit browser-facing Nerve origin used when Nerve opens server-side gateway connections to ZeroClaw. Useful for reverse-proxy, cloud, and hybrid deployments. |
 
 ```bash
 GATEWAY_TOKEN=your-token-here
@@ -122,7 +121,7 @@ NERVE_PUBLIC_ORIGIN=https://nerve.example.com
 For non-interactive installs that should talk to a remote gateway, pass the URL directly to the installer:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/daggerhashimoto/openclaw-nerve/master/install.sh \
+curl -fsSL https://raw.githubusercontent.com/daggerhashimoto/ZeroClaw-nerve/master/install.sh \
   | bash -s -- --gateway-url https://gw.example.com --gateway-token <token> --skip-setup
 ```
 
@@ -138,9 +137,9 @@ Nerve performs **server-side token injection**. When a connection is established
 
 This allows the browser UI to connect without having to manually enter or store the gateway token in the browser's persistent storage. If a connection is not trusted (e.g., remote access without authentication), the token field in the UI must be filled manually.
 
-> **Note:** `OPENCLAW_GATEWAY_TOKEN` is also accepted as a fallback for `GATEWAY_TOKEN`.
+> **Note:** `ZeroClaw_GATEWAY_TOKEN` is also accepted as a fallback for `GATEWAY_TOKEN`.
 >
-> **Token detection order:** The setup wizard finds the gateway token from: (1) systemd service file (`OPENCLAW_GATEWAY_TOKEN` env var in the unit), (2) `~/.openclaw/openclaw.json`, (3) `OPENCLAW_GATEWAY_TOKEN` shell env var. The systemd source takes priority because the gateway process reads the env var over the config file — a known issue where `openclaw onboard` writes different tokens to each location.
+> **Token detection order:** The setup wizard finds the gateway token from: (1) systemd service file (`ZeroClaw_GATEWAY_TOKEN` env var in the unit), (2) `~/.ZeroClaw/ZeroClaw.json`, (3) `ZeroClaw_GATEWAY_TOKEN` shell env var. The systemd source takes priority because the gateway process reads the env var over the config file — a known issue where `ZeroClaw onboard` writes different tokens to each location.
 
 ### Agent Identity
 
@@ -286,10 +285,10 @@ REPLICATE_BASE_URL=https://api.replicate.com/v1
 | Variable | Default | Description |
 |---------|---------|-------------|
 | `FILE_BROWSER_ROOT` | `""` (disabled) | If set, overrides the file browser root directory for all sessions. In this mode, file-browser `agentId` scoping is bypassed, default exclusion rules are disabled, and delete operations are permanent (no `.trash` recovery). |
-| `MEMORY_PATH` | `~/.openclaw/workspace/MEMORY.md` | Path to the main agent's long-term memory file |
-| `MEMORY_DIR` | `~/.openclaw/workspace/memory/` | Directory for the main agent's daily memory files (`YYYY-MM-DD.md`) |
-| `SESSIONS_DIR` | `~/.openclaw/agents/main/sessions/` | Session transcript directory (scanned for token usage) |
-| `USAGE_FILE` | `~/.openclaw/token-usage.json` | Persistent cumulative token usage data |
+| `MEMORY_PATH` | `~/.ZeroClaw/workspace/MEMORY.md` | Path to the main agent's long-term memory file |
+| `MEMORY_DIR` | `~/.ZeroClaw/workspace/memory/` | Directory for the main agent's daily memory files (`YYYY-MM-DD.md`) |
+| `SESSIONS_DIR` | `~/.ZeroClaw/agents/main/sessions/` | Session transcript directory (scanned for token usage) |
+| `USAGE_FILE` | `~/.ZeroClaw/token-usage.json` | Persistent cumulative token usage data |
 | `NERVE_VOICE_PHRASES_PATH` | `~/.nerve/voice-phrases.json` | Override location for per-language voice phrase overrides |
 | `NERVE_WATCH_WORKSPACE_RECURSIVE` | `true` | Enables recursive `fs.watch` for full workspace `file.changed` SSE events outside `MEMORY.md` and `memory/`. Set this to `false` to disable full-workspace watching if you hit Linux inotify `ENOSPC` watcher exhaustion. Memory watchers stay enabled for discovered agent workspaces even when this is `false`. |
 
@@ -316,7 +315,7 @@ TTS_CACHE_MAX=500
 
 ### Updater State
 
-The updater stores state in `~/.nerve/updater/`. These are not configurable via env vars — they're managed automatically by `npm run update`.
+The updater stores state in `~/.nerve/updater/`. These are not configurable via env vars — they're managed automatically by `bun run update`.
 
 | Path | Purpose |
 |------|---------|
@@ -358,7 +357,7 @@ curl -X PUT http://localhost:3080/api/kanban/config \
 | `allowDoneDragBypass` | `boolean` | `false` | Allow dragging tasks directly to done (skipping review) |
 | `quickViewLimit` | `number` | `5` | Max tasks shown in workspace quick view (1--50) |
 | `proposalPolicy` | `string` | `"confirm"` | How agent proposals are handled: `"confirm"` (manual review) or `"auto"` (apply immediately) |
-| `defaultModel` | `string` | *(none)* | Default model for agent execution (max 100 chars). If unset, execution falls back to OpenClaw's configured default model |
+| `defaultModel` | `string` | *(none)* | Default model for agent execution (max 100 chars). If unset, execution falls back to ZeroClaw's configured default model |
 
 ### Column Schema
 
@@ -458,7 +457,7 @@ TTS_CACHE_TTL_MS=3600000
 TTS_CACHE_MAX=200
 
 # Custom Paths (optional)
-MEMORY_PATH=/home/user/.openclaw/workspace/MEMORY.md
-MEMORY_DIR=/home/user/.openclaw/workspace/memory
-SESSIONS_DIR=/home/user/.openclaw/agents/main/sessions
+MEMORY_PATH=/home/user/.ZeroClaw/workspace/MEMORY.md
+MEMORY_DIR=/home/user/.ZeroClaw/workspace/memory
+SESSIONS_DIR=/home/user/.ZeroClaw/agents/main/sessions
 ```

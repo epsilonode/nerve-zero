@@ -32,7 +32,7 @@ export async function isPortAvailable(port: number, host: string = '127.0.0.1'):
   });
 }
 
-/** Test if the OpenClaw gateway is reachable and, when provided, the token is actually accepted. */
+/** Test if the ZeroClaw gateway is reachable and, when provided, the token is actually accepted. */
 export async function testGatewayConnection(url: string, token?: string): Promise<{ ok: boolean; message: string }> {
   try {
     const healthResp = await fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });

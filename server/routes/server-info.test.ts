@@ -37,10 +37,6 @@ vi.mock('../lib/config.js', () => ({
   config: { agentName: 'Jen' },
 }));
 
-vi.mock('../lib/openclaw-config.js', () => ({
-  getDefaultAgentWorkspaceRoot: () => '/mock/workspaces',
-}));
-
 vi.mock('../middleware/rate-limit.js', () => ({
   rateLimitGeneral: vi.fn(async (_c: unknown, next: () => Promise<void>) => next()),
 }));
@@ -63,7 +59,7 @@ describe('GET /api/server-info', () => {
   it('returns Linux gateway start time from /proc', async () => {
     execFileImpl = (file, args, _opts, cb) => {
       expect(file).toBe('pgrep');
-      expect(args).toEqual(['-f', 'openclaw-gatewa']);
+      expect(args).toEqual(['-f', 'ZeroClaw-gatewa']);
       (cb as (err: Error | null, stdout: string) => void)(null, '72246\n');
     };
 
@@ -73,7 +69,7 @@ describe('GET /api/server-info', () => {
           'S', '1', '2', '3', '4', '5', '6', '7', '8', '9',
           '10', '11', '12', '13', '14', '15', '16', '17', '18', '1234',
         ];
-        return `72246 (openclaw-gateway) ${afterCommFields.join(' ')}`;
+        return `72246 (ZeroClaw-gateway) ${afterCommFields.join(' ')}`;
       }
       if (filePath === '/proc/stat') {
         return 'cpu 1 2 3 4\nbtime 1700000000\n';
@@ -89,7 +85,6 @@ describe('GET /api/server-info', () => {
     expect(json.gatewayStartedAt).toBe(1700000012340);
     expect(typeof json.serverTime).toBe('number');
     expect(json.agentName).toBe('Jen');
-    expect(json.defaultAgentWorkspaceRoot).toBe('/mock/workspaces');
   });
 
   it('returns macOS gateway start time from ps output', async () => {
@@ -98,7 +93,7 @@ describe('GET /api/server-info', () => {
     execFileImpl = (file, args, _opts, cb) => {
       execCalls.push({ file, args });
       if (file === 'ps' && Array.isArray(args) && args[0] === '-axo') {
-        (cb as (err: Error | null, stdout: string) => void)(null, '72245 openclaw\n72246 openclaw-gateway\n');
+        (cb as (err: Error | null, stdout: string) => void)(null, '72245 ZeroClaw\n72246 ZeroClaw-gateway\n');
         return;
       }
       if (file === 'ps' && Array.isArray(args) && args[0] === '-p') {
@@ -118,7 +113,6 @@ describe('GET /api/server-info', () => {
 
     const json = (await res.json()) as Record<string, unknown>;
     expect(json.gatewayStartedAt).toBe(new Date('Tue Mar 31 20:14:31 2026').getTime());
-    expect(json.defaultAgentWorkspaceRoot).toBe('/mock/workspaces');
     expect(execCalls).toEqual([
       { file: 'ps', args: ['-axo', 'pid=,comm='] },
       { file: 'ps', args: ['-p', '72246', '-o', 'lstart='] },

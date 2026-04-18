@@ -95,10 +95,6 @@ export async function resolveWorkspacePathForRoot(
 ): Promise<string | null> {
   const root = getWorkspaceRoot(workspaceRoot);
   const rootPrefix = root.endsWith(path.sep) ? root : root + path.sep;
-  const realRoot = await fs.realpath(root).catch(() => root);
-  const realRootPrefix = realRoot.endsWith(path.sep) ? realRoot : realRoot + path.sep;
-  const isWithinLexicalRoot = (candidate: string) => candidate === root || candidate.startsWith(rootPrefix);
-  const isWithinRealRoot = (candidate: string) => candidate === realRoot || candidate.startsWith(realRootPrefix);
 
   // Block obvious traversal attempts
   const normalized = path.normalize(relativePath);
@@ -115,17 +111,17 @@ export async function resolveWorkspacePathForRoot(
   const resolved = path.resolve(root, normalized);
 
   // Must be within workspace root
-  if (!isWithinLexicalRoot(resolved)) {
+  if (!resolved.startsWith(rootPrefix) && resolved !== root) {
     return null;
   }
 
   // Resolve symlinks and re-check
   try {
     const real = await fs.realpath(resolved);
-    if (!isWithinRealRoot(real)) {
+    if (!real.startsWith(rootPrefix) && real !== root) {
       return null;
     }
-    return resolved;
+    return real;
   } catch {
     // File doesn't exist
     if (!options?.allowNonExistent) return null;
@@ -137,7 +133,7 @@ export async function resolveWorkspacePathForRoot(
     while (current !== root) {
       try {
         const realCurrent = await fs.realpath(current);
-        if (!isWithinRealRoot(realCurrent)) {
+        if (!realCurrent.startsWith(rootPrefix) && realCurrent !== root) {
           return null;
         }
         return resolved;
@@ -150,8 +146,13 @@ export async function resolveWorkspacePathForRoot(
       }
     }
 
-    if (!isWithinRealRoot(realRoot)) {
-      return null;
+    try {
+      const realRoot = await fs.realpath(root);
+      if (!realRoot.startsWith(rootPrefix) && realRoot !== root) {
+        return null;
+      }
+    } catch {
+      // Fresh workspace root does not exist yet. That's fine.
     }
 
     return resolved;

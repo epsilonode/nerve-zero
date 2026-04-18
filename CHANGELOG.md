@@ -12,9 +12,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 **Kanban execution now matches the real session tree.** Assigned tasks launch as real child sessions beneath the selected assignee root, task completion and failures report back to the parent root, and background root notifications no longer misfire while those updates land (PR #198).
 
-**Remote and hybrid installs are less brittle.** Nerve now supports remote-gateway installation up front via `--gateway-url`, resolves gateway RPC origins from public config for remote workspace access, and explains missing cron capability with a clear remediation path instead of a dead-end warning (PR #181, PR #197, PR #200).
+**Remote and hybrid installs are less brittle.** Nerve now supports remote-gateway installation up front via `--gateway-url`, resolves browser-facing origins correctly for remote workspace access, and explains missing cron capability with a clear remediation path instead of a dead-end warning (PR #181, PR #197, PR #200).
 
-**Session and agent state are less misleading.** The model picker now reflects the active OpenClaw config, duplicate root-agent creation correctly registers suffixed agents in `openclaw.json`, direct-message sessions nest under the correct agent root, and the main root label stays canonical (PR #174, PR #185, PR #192, PR #196).
+**Session and agent state are less misleading.** The model picker now reflects the active ZeroClaw config, duplicate root-agent creation correctly registers suffixed agents in `ZeroClaw.json`, direct-message sessions nest under the correct agent root, and the main root label stays canonical (PR #174, PR #185, PR #192, PR #196).
 
 **Docs and setup guidance caught back up to reality.** AI setup docs landed, setup now prints the right deployment guide links, and stale operator docs were refreshed to match the current runtime and installer behavior (PR #179, PR #182, PR #191).
 
@@ -28,18 +28,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Setup now prints deployment guide links after configuration so operators can jump straight to the right topology docs (PR #179)
-- Setup now ensures `sessions_spawn` is allowlisted alongside the other required gateway tools for Kanban execution on current OpenClaw builds (PR #159)
-- Model selection now comes from the active OpenClaw config instead of Nerve-side fallback lists (PR #174)
+- Setup now ensures `sessions_spawn` is allowlisted alongside the other required gateway tools for Kanban execution on current ZeroClaw builds (PR #159)
+- Model selection now comes from the active ZeroClaw config instead of Nerve-side fallback lists (PR #174)
 - Chat input helper text now points users at the command palette more clearly (PR #175)
 
 ### Fixed
 - Skills API parsing now falls back to structured stderr JSON output when tools emit machine-readable results there (PR #161)
 - Sidebar session tree cleanup: only real roots are shown, direct-message sessions nest under their owning agent root, and `agent:main:main` always renders with a canonical label (PR #177, PR #185, PR #196)
 - Session selection click targets are more forgiving thanks to a small hover delay that reduces accidental steals while moving through the tree (PR #187)
-- Duplicate root-agent creation now registers the correct suffixed agent in `openclaw.json` so config, workspace, and session roots stay aligned (PR #192)
+- Duplicate root-agent creation now registers the correct suffixed agent in `ZeroClaw.json` so config, workspace, and session roots stay aligned (PR #192)
 - Assigned Kanban tasks now launch as real child sessions, clean up orphaned child sessions on partial launch failures, and report completion back to the parent root that owns the work (PR #198)
 - Background top-level root updates now set unread state correctly and only ping on terminal events (PR #198)
-- Remote-workspace gateway RPC now derives its request origin from public config instead of hardcoded loopback values, fixing hybrid/cloud `origin not allowed` failures (PR #200)
+- Remote workspace gateway access now derives its request origin from public config instead of hardcoded loopback values, fixing hybrid/cloud `origin not allowed` failures (PR #200)
 
 ### Documentation
 - Added AI setup docs and refreshed stale repo docs so installation, deployment, configuration, and troubleshooting guidance line up with the current runtime (PR #182, PR #191)
@@ -47,7 +47,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [1.5.1] - 2026-03-25
 
 ### Fixed
-- Restored the browser websocket auth identity to `webchat-ui` so remote deployments do not trip the gateway's stricter Control UI device-identity requirement on non-secure page origins. This fixes the 1.5.0 login failure reported by users connecting to remote gateway endpoints from plain remote HTTP Nerve pages.
+- Restored the browser websocket auth identity used at that time so remote deployments would not trip stricter gateway requirements on non-secure page origins. This fixed the 1.5.0 login failure reported by users connecting to remote gateway endpoints from plain remote HTTP Nerve pages.
 
 ## [1.5.0] - 2026-03-25
 
@@ -68,7 +68,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - An **After run** selector for one-shot subagents, with **Keep** and **Delete** cleanup options (PR #120)
 - **Font size setting** in Appearance settings, adjustable from 10px to 24px via dropdown, stored in `localStorage`, and applied instantly via a CSS custom property (PR #128)
 - **Xiaomi MiMo** as a first-class TTS provider, including API key plumbing, server-side synthesis support, and Audio settings controls for model, voice, and style (PR #129)
-- **Gateway RPC fallback for remote and sandboxed workspace access**, including a sandboxed-workspace notice in the Memory panel when local filesystem access is unavailable (PR #145)
+- **Gateway-backed fallback for remote and sandboxed workspace access**, including a sandboxed-workspace notice in the Memory panel when local filesystem access is unavailable (PR #145)
 - **Safe workspace path resolve and reveal** from markdown and chat references into the file browser (PR #148)
 
 ### Changed
@@ -90,7 +90,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Kanban runtime data now lives under `${NERVE_DATA_DIR:-~/.nerve}/kanban`, and legacy installs automatically migrate data from old `server-dist/data/kanban` or `server/data/kanban` locations on first run (PR #135)
 - Setup no longer attempts to approve malformed pending device request IDs, and gateway auth validation now uses a working token probe during defaults and check flows (PR #141)
 - Kanban run completion now accepts stable child identifiers, ignores stale client `run` patches, stops stale pollers after reruns, and normalizes spawn session aliases consistently (PR #143)
-- Remote and sandboxed workspace gateway fallback now authenticates correctly with device identity in real OpenShell-style deployments (PR #145)
+- Remote and sandboxed workspace fallback now authenticates correctly in real OpenShell-style deployments (PR #145)
 - Workspace path resolve now returns `404` for safe missing targets, and markdown file-link handlers refresh when workspace path callbacks change (PR #149)
 
 ### Documentation
@@ -218,7 +218,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Updater now resolves the latest published GitHub release instead of defaulting to master HEAD (PR #45)
 
 ### Fixed
-- Server build (`build:server`) now included in `npm run build`; `npm run prod` runs both builds (PR #47 by @jamesjmartin)
+- Server build (`build:server`) now included in `bun run build`; `bun run prod` runs both builds (PR #47 by @jamesjmartin)
 - Memory collapse toggle: first click to expand no longer silently ignored due to key mismatch and nullish default (PR #62 by @jamesjmartin)
 - Kanban board columns scroll vertically when tasks overflow viewport (PR #63)
 - Switching TTS provider no longer sends the previous provider's model ID, which caused 400 errors
@@ -294,7 +294,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Voice phrase overrides now persist as runtime state at `~/.nerve/voice-phrases.json` (configurable via `NERVE_VOICE_PHRASES_PATH`).
 - Local STT default model is now multilingual `tiny`.
 - Chat rendering now prefers event-first WebSocket updates instead of periodic full-history polling (PR #16).
-- Setup/config flow now uses one bundled consent prompt for OpenClaw gateway config patches, including `gateway.tools.allow` updates for cron management (PR #15).
+- Setup/config flow now uses one bundled consent prompt for ZeroClaw gateway config patches, including `gateway.tools.allow` updates for cron management (PR #15).
 - UI is now fully responsive across desktop, tablet, and mobile with adaptive small-screen navigation and controls (PR #24).
 
 ### Fixed
@@ -305,7 +305,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Improved 4xx/5xx separation for language/transcribe config update failures.
 - Improved voice-phrase modal reliability (load/save error handling and request-abort race handling).
 - Accessibility: icon-only remove-phrase controls now include accessible labels.
-- `ws-proxy` now enriches `PATH` before `openclaw` CLI calls, fixing restricted RPC methods under nvm/systemd environments (PR #12).
+- `ws-proxy` now enriches `PATH` before `ZeroClaw` CLI calls, fixing restricted RPC methods under nvm/systemd environments (PR #12).
 - Session and memory row actions are now reliably accessible on touch devices (no hover-only dependency) (PR #24).
 
 ### Documentation

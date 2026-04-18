@@ -1,6 +1,5 @@
 import path from 'node:path';
 import { config } from './config.js';
-import { buildDefaultAgentWorkspacePath, getConfiguredAgentWorkspace } from './openclaw-config.js';
 
 export interface AgentWorkspace {
   agentId: string;
@@ -41,8 +40,7 @@ export function resolveAgentWorkspace(agentId?: string): AgentWorkspace {
     };
   }
 
-  const workspaceRoot = getConfiguredAgentWorkspace(normalizedAgentId)
-    || buildDefaultAgentWorkspacePath(normalizedAgentId);
+  const workspaceRoot = path.join(config.home, '.ZeroClaw', `workspace-${normalizedAgentId}`);
   return {
     agentId: normalizedAgentId,
     workspaceRoot,

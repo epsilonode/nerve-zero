@@ -12,7 +12,7 @@ export const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024;
 
 // ─── Connection defaults ──────────────────────────────────────────────────────
 // Used as placeholder/fallback only — actual URL comes from /api/connect-defaults
-export const DEFAULT_GATEWAY_WS = 'ws://127.0.0.1:18789';
+export const DEFAULT_GATEWAY_WS = 'ws://127.0.0.1:18789/ws/chat';
 
 /** Escape special regex characters for safe use in RegExp constructors */
 export function escapeRegex(input: string): string {

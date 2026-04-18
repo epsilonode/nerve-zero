@@ -20,18 +20,6 @@ describe('filterMessage', () => {
     expect(filterMessage({ role: 'assistant', content: 'Hi there' })).toBe(true);
   });
 
-  it('hides exact internal assistant control replies', () => {
-    expect(filterMessage({ role: 'assistant', content: 'NO_REPLY' })).toBe(false);
-    expect(filterMessage({ role: 'assistant', content: '  HEARTBEAT_OK\n' })).toBe(false);
-  });
-
-  it('hides pure internal wake bundles', () => {
-    expect(filterMessage({
-      role: 'user',
-      content: 'System (untrusted): [2026-04-16 18:27:55 GMT+3] Exec completed (wild-orb, code 0) :: done\n\nAn async command you ran earlier has completed. The result is shown in the system messages above. Handle the result internally. Do not relay it to the user unless explicitly requested.\nCurrent time: Thursday, April 16th, 2026 - 6:29 PM (Europe/Istanbul) / 2026-04-16 15:29 UTC',
-    })).toBe(false);
-  });
-
   it('passes through sub-agent completions (tagged)', () => {
     expect(filterMessage({
       role: 'user',
@@ -152,7 +140,7 @@ describe('splitToolCallMessage', () => {
     expect(result.some(m => m.isThinking)).toBe(true);
   });
 
-  it('handles user messages with timestamped system events', () => {
+  it('handles user messages with system events', () => {
     const msg: ChatMessage = {
       role: 'user',
       content: 'System: [2026-02-17 20:30:23 GMT+1] Agent started\nHello!',
@@ -160,52 +148,6 @@ describe('splitToolCallMessage', () => {
     const result = splitToolCallMessage(msg);
     expect(result.some(m => m.role === 'event')).toBe(true);
     expect(result.some(m => m.role === 'user')).toBe(true);
-  });
-
-  it('handles untrusted system-event prefixes from newer OpenClaw builds', () => {
-    const msg: ChatMessage = {
-      role: 'user',
-      content: 'System (untrusted): [2026-04-16 18:11:51 GMT+3] Exec completed (gentle-l, code 0) :: done',
-    };
-    const result = splitToolCallMessage(msg);
-    expect(result).toHaveLength(1);
-    expect(result[0].role).toBe('event');
-    expect(result[0].rawText).toContain('System (untrusted): [2026-04-16 18:11:51 GMT+3] Exec completed');
-  });
-
-  it('strips async exec follow-up instructions from injected system-event bundles', () => {
-    const msg: ChatMessage = {
-      role: 'user',
-      content: 'System (untrusted): [2026-04-16 18:11:51 GMT+3] Exec completed (gentle-l, code 0) :: done\n\nAn async command you ran earlier has completed. The result is shown in the system messages above. Handle the result internally. Do not relay it to the user unless explicitly requested.\nCurrent time: Thursday, April 16th, 2026 - 6:12 PM (Europe/Istanbul) / 2026-04-16 15:12 UTC',
-    };
-    const result = splitToolCallMessage(msg);
-    expect(result).toHaveLength(1);
-    expect(result[0].role).toBe('event');
-    expect(result[0].rawText).not.toContain('An async command you ran earlier has completed.');
-    expect(result[0].rawText).not.toContain('Current time:');
-  });
-
-  it('strips standalone follow-up lines like "Handle the result internally."', () => {
-    const msg: ChatMessage = {
-      role: 'user',
-      content: 'System (untrusted): [2026-04-16 18:11:51 GMT+3] Exec completed (gentle-l, code 0) :: done\nHandle the result internally.\nDo not relay it to the user unless explicitly requested.',
-    };
-    const result = splitToolCallMessage(msg);
-    expect(result).toHaveLength(1);
-    expect(result[0].role).toBe('event');
-    expect(result[0].rawText).not.toContain('Handle the result internally.');
-  });
-
-  it('preserves later user text and paragraph breaks after a system event bundle', () => {
-    const msg: ChatMessage = {
-      role: 'user',
-      content: 'System (untrusted): [2026-04-16 18:11:51 GMT+3] Exec completed (gentle-l, code 0) :: done\n\nAn async command you ran earlier has completed.\nCurrent time: Thursday, April 16th, 2026 - 6:12 PM (Europe/Istanbul) / 2026-04-16 15:12 UTC\nHello there\n\nSecond paragraph',
-    };
-    const result = splitToolCallMessage(msg);
-    expect(result).toHaveLength(2);
-    expect(result[0].role).toBe('event');
-    expect(result[1].role).toBe('user');
-    expect(result[1].rawText).toBe('Hello there\n\nSecond paragraph');
   });
 });
 
@@ -312,73 +254,8 @@ describe('processChatMessages', () => {
     expect(sysMsg!.isSystemNotification).toBe(true);
   });
 
-  it('drops internal wake bundles and silent control replies from rendered history', () => {
-    const msgs: ChatMessage[] = [
-      { role: 'assistant', content: 'Already did it ⚡' },
-      {
-        role: 'user',
-        content: 'System (untrusted): [2026-04-16 18:27:55 GMT+3] Exec completed (wild-orb, code 0) :: done\nSystem (untrusted): [2026-04-16 18:28:54 GMT+3] Exec completed (rapid-sa, code 0) :: https://github.com/daggerhashimoto/openclaw-nerve/pull/278\n\nAn async command you ran earlier has completed. The result is shown in the system messages above. Handle the result internally. Do not relay it to the user unless explicitly requested.\nCurrent time: Thursday, April 16th, 2026 - 6:29 PM (Europe/Istanbul) / 2026-04-16 15:29 UTC',
-      },
-      { role: 'assistant', content: 'NO_REPLY' },
-    ];
-    const result = processChatMessages(msgs);
-    expect(result).toHaveLength(1);
-    expect(result[0].role).toBe('assistant');
-    expect(result[0].rawText).toBe('Already did it ⚡');
-  });
-
   it('handles empty input', () => {
     expect(processChatMessages([])).toHaveLength(0);
-  });
-
-  it('preserves legacy MediaPath and MediaUrl images as extracted images', () => {
-    const msgs: ChatMessage[] = [
-      {
-        role: 'assistant',
-        content: 'legacy image payload',
-        MediaPath: '/root/.openclaw/workspace/legacy/screenshot.png',
-        MediaUrls: ['https://example.com/generated.png'],
-      },
-    ];
-
-    const result = processChatMessages(msgs);
-
-    expect(result).toHaveLength(1);
-    expect(result[0].extractedImages).toEqual([
-      { url: '/api/files?path=%2Froot%2F.openclaw%2Fworkspace%2Flegacy%2Fscreenshot.png', alt: 'screenshot.png' },
-      { url: 'https://example.com/generated.png', alt: 'generated.png' },
-    ]);
-  });
-
-  it('does not synthesize omitted transcript image URLs without a persisted timestamp', () => {
-    const result = processChatMessages([
-      {
-        role: 'assistant',
-        content: [
-          { type: 'text', text: 'generated image' },
-          { type: 'image', omitted: true, mimeType: 'image/png' },
-        ],
-      },
-    ], { sessionKey: 'agent:main:main' });
-
-    expect(result).toHaveLength(1);
-    expect(result[0].extractedImages).toBeUndefined();
-  });
-
-  it('deduplicates merged image references while preserving order', () => {
-    const result = processChatMessages([
-      {
-        role: 'assistant',
-        content: '![generated](https://example.com/generated.png)\n![other](https://example.com/other.png)',
-        MediaUrls: ['https://example.com/generated.png'],
-      },
-    ]);
-
-    expect(result).toHaveLength(1);
-    expect(result[0].extractedImages?.map((img) => img.url)).toEqual([
-      'https://example.com/generated.png',
-      'https://example.com/other.png',
-    ]);
   });
 });
 
@@ -417,30 +294,5 @@ describe('loadChatHistory', () => {
   it('propagates RPC errors', async () => {
     const rpc = vi.fn().mockRejectedValue(new Error('network error'));
     await expect(loadChatHistory({ rpc, sessionKey: 'sk' })).rejects.toThrow('network error');
-  });
-
-  it('hydrates omitted transcript images through the session media route', async () => {
-    const rpc = vi.fn().mockResolvedValue({
-      messages: [
-        {
-          role: 'assistant',
-          timestamp: 1775131617235,
-          content: [
-            { type: 'text', text: 'generated image' },
-            { type: 'image', omitted: true, mimeType: 'image/png' },
-          ],
-        },
-      ],
-    });
-
-    const result = await loadChatHistory({ rpc, sessionKey: 'agent:main:main' });
-
-    expect(result).toHaveLength(1);
-    expect(result[0].extractedImages).toEqual([
-      {
-        url: '/api/sessions/media?sessionKey=agent%3Amain%3Amain&timestamp=1775131617235&imageIndex=0',
-        alt: 'message-1775131617235-image-0.png',
-      },
-    ]);
   });
 });

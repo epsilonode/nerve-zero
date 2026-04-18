@@ -28,6 +28,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 
 const HOME = process.env.HOME || os.homedir();
+const ZEROCLAW_JSON_CONFIG_PATH = path.join(HOME, '.ZeroClaw', 'ZeroClaw.json');
+const ZEROCLAW_TOML_CONFIG_PATHS = [
+  path.join(HOME, '.zeroclaw', 'config.toml'),
+  path.join(HOME, '.ZeroClaw', 'config.toml'),
+];
 const SUPPORTED_LANGUAGE_CODES = new Set(SUPPORTED_LANGUAGES.map((l) => l.code));
 
 const LANGUAGE_ENV_VALUE = process.env.NERVE_LANGUAGE ?? process.env.LANGUAGE;
@@ -41,6 +46,84 @@ function normalizeLanguagePreference(language: string | undefined): string {
 
   return code;
 }
+
+interface DetectedLocalGatewayConfig {
+  url: string | null;
+  token: string | null;
+}
+
+function detectLocalGatewayConfig(): DetectedLocalGatewayConfig {
+  const detected: DetectedLocalGatewayConfig = { url: null, token: null };
+
+  if (fs.existsSync(ZEROCLAW_JSON_CONFIG_PATH)) {
+    try {
+      const raw = fs.readFileSync(ZEROCLAW_JSON_CONFIG_PATH, 'utf-8');
+      const parsed = JSON.parse(raw) as {
+        gateway?: {
+          port?: number;
+          auth?: { token?: string };
+        };
+      };
+
+      const port = parsed.gateway?.port;
+      if (typeof port === 'number' && Number.isFinite(port) && port > 0) {
+        detected.url = `http://127.0.0.1:${port}`;
+      }
+
+      const token = parsed.gateway?.auth?.token?.trim();
+      if (token) detected.token = token;
+    } catch {
+      // ignore local config parse failures and keep env/default fallbacks
+    }
+  }
+
+  if (!detected.url) {
+    for (const tomlPath of ZEROCLAW_TOML_CONFIG_PATHS) {
+      if (!fs.existsSync(tomlPath)) continue;
+      try {
+        const raw = fs.readFileSync(tomlPath, 'utf-8');
+        const gatewaySection = raw.match(/\[gateway\]([\s\S]*?)(?:\n\[[^\]]+\]|$)/i)?.[1] || '';
+        const portMatch = gatewaySection.match(/^port\s*=\s*(\d+)\s*$/m);
+        const hostMatch = gatewaySection.match(/^host\s*=\s*"([^"]+)"\s*$/m);
+        const port = portMatch?.[1] ? Number(portMatch[1]) : NaN;
+        if (Number.isFinite(port) && port > 0) {
+          const host = hostMatch?.[1]?.trim() || '127.0.0.1';
+          detected.url = `http://${host}:${port}`;
+          break;
+        }
+      } catch {
+        // continue to the next candidate
+      }
+    }
+  }
+
+  return detected;
+}
+
+function chooseGatewayUrl(explicitUrl: string | undefined, detectedUrl: string | null): string {
+  const configured = explicitUrl?.trim();
+  if (!configured) return detectedUrl || DEFAULT_GATEWAY_URL;
+
+  try {
+    const configuredUrl = new URL(configured);
+    const isLoopbackConfigured = ['127.0.0.1', 'localhost', '::1'].includes(configuredUrl.hostname);
+    const isLegacyDefaultPort = configuredUrl.port === '18789';
+    if (isLoopbackConfigured && isLegacyDefaultPort && detectedUrl && detectedUrl !== configured) {
+      return detectedUrl;
+    }
+  } catch {
+    return configured;
+  }
+
+  return configured;
+}
+
+const detectedLocalGateway = detectLocalGatewayConfig();
+const resolvedGatewayUrl = chooseGatewayUrl(process.env.GATEWAY_URL, detectedLocalGateway.url);
+const resolvedGatewayToken = process.env.GATEWAY_TOKEN
+  || process.env.ZeroClaw_GATEWAY_TOKEN
+  || detectedLocalGateway.token
+  || '';
 
 export const config = {
   port: Number(process.env.PORT || DEFAULT_PORT),
@@ -67,8 +150,8 @@ export const config = {
       : 'female',
 
   // Gateway connection
-  gatewayUrl: process.env.GATEWAY_URL || DEFAULT_GATEWAY_URL,
-  gatewayToken: process.env.GATEWAY_TOKEN || process.env.OPENCLAW_GATEWAY_TOKEN || '',
+  gatewayUrl: resolvedGatewayUrl,
+  gatewayToken: resolvedGatewayToken,
   publicOrigin: process.env.NERVE_PUBLIC_ORIGIN || '',
 
   // Agent identity (used in UI)
@@ -76,14 +159,14 @@ export const config = {
 
   home: HOME,
 
-  // Paths (configurable via env, with OpenClaw defaults)
+  // Paths (configurable via env, with ZeroClaw defaults)
   dist: path.join(PROJECT_ROOT, 'dist'),
   agentLogPath: path.join(PROJECT_ROOT, 'agent-log.json'),
   fileBrowserRoot: process.env.FILE_BROWSER_ROOT || '',
-  memoryPath: process.env.MEMORY_PATH || path.join(HOME, '.openclaw', 'workspace', 'MEMORY.md'),
-  memoryDir: process.env.MEMORY_DIR || path.join(HOME, '.openclaw', 'workspace', 'memory'),
-  sessionsDir: process.env.SESSIONS_DIR || path.join(HOME, '.openclaw', 'agents', 'main', 'sessions'),
-  usageFile: process.env.USAGE_FILE || path.join(HOME, '.openclaw', 'token-usage.json'),
+  memoryPath: process.env.MEMORY_PATH || path.join(HOME, '.ZeroClaw', 'workspace', 'MEMORY.md'),
+  memoryDir: process.env.MEMORY_DIR || path.join(HOME, '.ZeroClaw', 'workspace', 'memory'),
+  sessionsDir: process.env.SESSIONS_DIR || path.join(HOME, '.ZeroClaw', 'agents', 'main', 'sessions'),
+  usageFile: process.env.USAGE_FILE || path.join(HOME, '.ZeroClaw', 'token-usage.json'),
   workspaceWatchRecursive: process.env.NERVE_WATCH_WORKSPACE_RECURSIVE !== 'false',
   workspaceRemote: process.env.NERVE_WORKSPACE_REMOTE === 'true',
   certPath: path.join(PROJECT_ROOT, 'certs', 'cert.pem'),
@@ -220,7 +303,7 @@ export function validateConfig(): void {
     console.warn(
       '\n  \x1b[33m⚠ GATEWAY_TOKEN is not set\x1b[0m\n' +
       '  Gateway API calls (memories, models, session info) will fail.\n' +
-      '  Run \x1b[36mnpm run setup\x1b[0m to configure, or set GATEWAY_TOKEN in .env\n',
+      '  Run \x1b[36mbun run setup\x1b[0m to configure, or set GATEWAY_TOKEN in .env\n',
     );
   }
 
@@ -228,7 +311,7 @@ export function validateConfig(): void {
   if (config.auth && !config.passwordHash && !config.gatewayToken) {
     console.error(
       '\n  \x1b[31m✗ NERVE_AUTH is enabled but no password or gateway token is configured.\x1b[0m\n' +
-      '  Run \x1b[36mnpm run setup\x1b[0m to set a password, or set GATEWAY_TOKEN as a fallback.\n',
+      '  Run \x1b[36mbun run setup\x1b[0m to set a password, or set GATEWAY_TOKEN as a fallback.\n',
     );
   }
 
@@ -244,14 +327,14 @@ export function validateConfig(): void {
       console.warn(
         '\n  \x1b[33m⚠ INSECURE MODE: Server binds to 0.0.0.0 with authentication DISABLED.\x1b[0m\n' +
         '  All API endpoints are accessible from the network without a password.\n' +
-        '  This is dangerous. Run \x1b[36mnpm run setup\x1b[0m to enable authentication.\n',
+        '  This is dangerous. Run \x1b[36mbun run setup\x1b[0m to enable authentication.\n',
       );
     } else {
       console.error(
         '\n  \x1b[31m✗ Refusing to start: HOST=0.0.0.0 with authentication disabled.\x1b[0m\n' +
         '  This would expose all API endpoints (files, memory, API keys) to the network.\n\n' +
         '  To fix, either:\n' +
-        '    1. Enable auth:  \x1b[36mnpm run setup\x1b[0m\n' +
+        '    1. Enable auth:  \x1b[36mbun run setup\x1b[0m\n' +
         '    2. Bind locally: \x1b[36mHOST=127.0.0.1\x1b[0m in .env\n' +
         '    3. Override:     \x1b[36mNERVE_ALLOW_INSECURE=true\x1b[0m in .env (NOT recommended)\n',
       );

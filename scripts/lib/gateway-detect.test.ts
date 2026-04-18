@@ -42,14 +42,14 @@ describe('gateway detection and repair', () => {
     tempHome = mkdtempSync(path.join(os.tmpdir(), 'nerve-gateway-detect-'));
     process.env.HOME = tempHome;
     process.env.NERVE_DATA_DIR = path.join(tempHome, '.nerve');
-    delete process.env.OPENCLAW_GATEWAY_TOKEN;
+    delete process.env.ZeroClaw_GATEWAY_TOKEN;
 
-    mkdirSync(path.join(tempHome, '.openclaw', 'devices'), { recursive: true });
-    mkdirSync(path.join(tempHome, '.openclaw', 'identity'), { recursive: true });
-    mkdirSync(path.join(tempHome, '.openclaw'), { recursive: true });
+    mkdirSync(path.join(tempHome, '.ZeroClaw', 'devices'), { recursive: true });
+    mkdirSync(path.join(tempHome, '.ZeroClaw', 'identity'), { recursive: true });
+    mkdirSync(path.join(tempHome, '.ZeroClaw'), { recursive: true });
     mkdirSync(path.join(tempHome, '.nerve'), { recursive: true });
 
-    writeFileSync(path.join(tempHome, '.openclaw', 'openclaw.json'), JSON.stringify({
+    writeFileSync(path.join(tempHome, '.ZeroClaw', 'ZeroClaw.json'), JSON.stringify({
       gateway: {
         port: 18789,
         auth: { token: 'test-token' },
@@ -65,7 +65,7 @@ describe('gateway detection and repair', () => {
       publicKeyB64url: 'nerve-public-key',
     }, null, 2));
 
-    writeFileSync(path.join(tempHome, '.openclaw', 'devices', 'paired.json'), JSON.stringify({
+    writeFileSync(path.join(tempHome, '.ZeroClaw', 'devices', 'paired.json'), JSON.stringify({
       'gateway-device': {
         deviceId: 'gateway-device',
         scopes: FULL_OPERATOR_SCOPES,
@@ -92,12 +92,12 @@ describe('gateway detection and repair', () => {
       },
     }, null, 2));
 
-    writeFileSync(path.join(tempHome, '.openclaw', 'identity', 'device.json'), JSON.stringify({
+    writeFileSync(path.join(tempHome, '.ZeroClaw', 'identity', 'device.json'), JSON.stringify({
       deviceId: 'gateway-device',
       publicKeyPem: '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA2sI3DpP2u80EIk1BddY5hAzvY4xXHzkwmo7aX6ixkm0=\n-----END PUBLIC KEY-----\n',
     }, null, 2));
 
-    writeFileSync(path.join(tempHome, '.openclaw', 'identity', 'device-auth.json'), JSON.stringify({
+    writeFileSync(path.join(tempHome, '.ZeroClaw', 'identity', 'device-auth.json'), JSON.stringify({
       version: 1,
       deviceId: 'gateway-device',
       tokens: {
@@ -134,7 +134,7 @@ describe('gateway detection and repair', () => {
       expect(result.ok).toBe(true);
     }
 
-    const updated = JSON.parse(readFileSync(path.join(tempHome, '.openclaw', 'openclaw.json'), 'utf8'));
+    const updated = JSON.parse(readFileSync(path.join(tempHome, '.ZeroClaw', 'ZeroClaw.json'), 'utf8'));
     expect(updated.gateway.controlUi.allowedOrigins).toEqual(expect.arrayContaining([
       'http://localhost:3080',
       `http://${EXAMPLE_TS_IPV4}:3080`,
@@ -157,7 +157,7 @@ describe('gateway detection and repair', () => {
     const result = toolsAllowChange!.apply();
     expect(result.ok).toBe(true);
 
-    const updated = JSON.parse(readFileSync(path.join(tempHome, '.openclaw', 'openclaw.json'), 'utf8'));
+    const updated = JSON.parse(readFileSync(path.join(tempHome, '.ZeroClaw', 'ZeroClaw.json'), 'utf8'));
     expect(updated.gateway.tools.allow).toEqual(expect.arrayContaining([
       'cron',
       'gateway',
@@ -166,7 +166,7 @@ describe('gateway detection and repair', () => {
   });
 
   it('prefers a detected config token over a stale shell env token during setup', async () => {
-    process.env.OPENCLAW_GATEWAY_TOKEN = 'stale-shell-token';
+    process.env.ZeroClaw_GATEWAY_TOKEN = 'stale-shell-token';
 
     const { mod } = await importGatewayDetect();
     const detected = mod.detectGatewayConfig();
@@ -182,11 +182,11 @@ describe('gateway detection and repair', () => {
   });
 
   it('prefers the systemd runtime token over a stale shell env token during setup', async () => {
-    process.env.OPENCLAW_GATEWAY_TOKEN = 'stale-shell-token';
+    process.env.ZeroClaw_GATEWAY_TOKEN = 'stale-shell-token';
     mkdirSync(path.join(tempHome, '.config', 'systemd', 'user'), { recursive: true });
     writeFileSync(
-      path.join(tempHome, '.config', 'systemd', 'user', 'openclaw-gateway.service'),
-      '[Service]\nEnvironment=OPENCLAW_GATEWAY_TOKEN=real-systemd-token\n',
+      path.join(tempHome, '.config', 'systemd', 'user', 'ZeroClaw-gateway.service'),
+      '[Service]\nEnvironment=ZeroClaw_GATEWAY_TOKEN=real-systemd-token\n',
     );
 
     const { mod } = await importGatewayDetect();
@@ -202,13 +202,13 @@ describe('gateway detection and repair', () => {
     });
   });
 
-  it('detects a systemd-only runtime token even when openclaw.json is missing', async () => {
-    process.env.OPENCLAW_GATEWAY_TOKEN = 'stale-shell-token';
-    rmSync(path.join(tempHome, '.openclaw', 'openclaw.json'));
+  it('detects a systemd-only runtime token even when ZeroClaw.json is missing', async () => {
+    process.env.ZeroClaw_GATEWAY_TOKEN = 'stale-shell-token';
+    rmSync(path.join(tempHome, '.ZeroClaw', 'ZeroClaw.json'));
     mkdirSync(path.join(tempHome, '.config', 'systemd', 'user'), { recursive: true });
     writeFileSync(
-      path.join(tempHome, '.config', 'systemd', 'user', 'openclaw-gateway.service'),
-      '[Service]\nEnvironment=OPENCLAW_GATEWAY_TOKEN=real-systemd-token\n',
+      path.join(tempHome, '.config', 'systemd', 'user', 'ZeroClaw-gateway.service'),
+      '[Service]\nEnvironment=ZeroClaw_GATEWAY_TOKEN=real-systemd-token\n',
     );
 
     const { mod } = await importGatewayDetect();
@@ -245,7 +245,7 @@ describe('gateway detection and repair', () => {
         }));
       }
 
-      if (command === 'openclaw devices approve req-nerve') {
+      if (command === 'ZeroClaw devices approve req-nerve') {
         return Buffer.from('approved');
       }
 
@@ -262,11 +262,11 @@ describe('gateway detection and repair', () => {
       approved: 1,
     });
     expect(execSyncMock).toHaveBeenCalledWith(
-      'openclaw devices approve req-nerve',
+      'ZeroClaw devices approve req-nerve',
       expect.objectContaining({ timeout: 10000, stdio: 'pipe' }),
     );
     expect(execSyncMock).not.toHaveBeenCalledWith(
-      'openclaw devices approve req-other',
+      'ZeroClaw devices approve req-other',
       expect.anything(),
     );
   });
@@ -298,7 +298,7 @@ describe('gateway detection and repair', () => {
     expect(result.approved).toBe(0);
     expect(result.message.toLowerCase()).toContain('manual');
     expect(execSyncMock).not.toHaveBeenCalledWith(
-      expect.stringContaining('openclaw devices approve'),
+      expect.stringContaining('ZeroClaw devices approve'),
       expect.anything(),
     );
   });
@@ -332,7 +332,7 @@ describe('gateway detection and repair', () => {
     expect(result.approved).toBe(0);
     expect(result.message.toLowerCase()).toContain('manual');
     expect(execSyncMock).not.toHaveBeenCalledWith(
-      expect.stringContaining('openclaw devices approve'),
+      expect.stringContaining('ZeroClaw devices approve'),
       expect.anything(),
     );
   });
@@ -361,7 +361,7 @@ describe('gateway detection and repair', () => {
     expect(result.approved).toBe(0);
     expect(result.message.toLowerCase()).toContain('manual');
     expect(execSyncMock).not.toHaveBeenCalledWith(
-      expect.stringContaining('openclaw devices approve'),
+      expect.stringContaining('ZeroClaw devices approve'),
       expect.anything(),
     );
   });
@@ -399,7 +399,7 @@ describe('gateway detection and repair', () => {
     expect(result.approved).toBe(0);
     expect(result.message.toLowerCase()).toContain('manual');
     expect(execSyncMock).not.toHaveBeenCalledWith(
-      expect.stringContaining('openclaw devices approve'),
+      expect.stringContaining('ZeroClaw devices approve'),
       expect.anything(),
     );
   });
@@ -407,7 +407,7 @@ describe('gateway detection and repair', () => {
   it('fails closed when pending-request inspection cannot run safely', async () => {
     const execSyncMock = vi.fn((command: string) => {
       if (command.includes('devices list --json')) {
-        throw new Error('openclaw devices list failed');
+        throw new Error('ZeroClaw devices list failed');
       }
 
       throw new Error(`Unexpected command: ${command}`);
@@ -422,13 +422,13 @@ describe('gateway detection and repair', () => {
     expect(result.approved).toBe(0);
     expect(result.message.toLowerCase()).toContain('manual');
     expect(execSyncMock).not.toHaveBeenCalledWith(
-      expect.stringContaining('openclaw devices approve'),
+      expect.stringContaining('ZeroClaw devices approve'),
       expect.anything(),
     );
   });
 
   it('repairs only the Nerve paired device record and preserves unrelated devices', async () => {
-    writeFileSync(path.join(tempHome, '.openclaw', 'devices', 'paired.json'), JSON.stringify({
+    writeFileSync(path.join(tempHome, '.ZeroClaw', 'devices', 'paired.json'), JSON.stringify({
       'gateway-device': {
         deviceId: 'gateway-device',
         scopes: FULL_OPERATOR_SCOPES,
@@ -456,7 +456,7 @@ describe('gateway detection and repair', () => {
 
     const { mod } = await importGatewayDetect();
     const result = mod.prePairNerveDevice('test-token');
-    const paired = JSON.parse(readFileSync(path.join(tempHome, '.openclaw', 'devices', 'paired.json'), 'utf8'));
+    const paired = JSON.parse(readFileSync(path.join(tempHome, '.ZeroClaw', 'devices', 'paired.json'), 'utf8'));
 
     expect(result.ok).toBe(true);
     expect(paired['nerve-device'].scopes).toEqual(FULL_OPERATOR_SCOPES);
@@ -467,7 +467,7 @@ describe('gateway detection and repair', () => {
   });
 
   it('repairs only the explicitly targeted identity and does not broaden every paired device', async () => {
-    writeFileSync(path.join(tempHome, '.openclaw', 'devices', 'paired.json'), JSON.stringify({
+    writeFileSync(path.join(tempHome, '.ZeroClaw', 'devices', 'paired.json'), JSON.stringify({
       'gateway-device': {
         deviceId: 'gateway-device',
         scopes: ['operator.read'],
@@ -482,8 +482,8 @@ describe('gateway detection and repair', () => {
 
     const { mod } = await importGatewayDetect();
     const result = mod.fixGatewayDeviceScopes({ targetDeviceId: 'gateway-device' });
-    const paired = JSON.parse(readFileSync(path.join(tempHome, '.openclaw', 'devices', 'paired.json'), 'utf8'));
-    const deviceAuth = JSON.parse(readFileSync(path.join(tempHome, '.openclaw', 'identity', 'device-auth.json'), 'utf8'));
+    const paired = JSON.parse(readFileSync(path.join(tempHome, '.ZeroClaw', 'devices', 'paired.json'), 'utf8'));
+    const deviceAuth = JSON.parse(readFileSync(path.join(tempHome, '.ZeroClaw', 'identity', 'device-auth.json'), 'utf8'));
 
     expect(result.ok).toBe(true);
     expect(paired['gateway-device'].scopes).toEqual(FULL_OPERATOR_SCOPES);
@@ -494,7 +494,7 @@ describe('gateway detection and repair', () => {
   });
 
   it('requests a gateway scope repair when the targeted paired operator token scopes are stale', async () => {
-    writeFileSync(path.join(tempHome, '.openclaw', 'devices', 'paired.json'), JSON.stringify({
+    writeFileSync(path.join(tempHome, '.ZeroClaw', 'devices', 'paired.json'), JSON.stringify({
       'gateway-device': {
         deviceId: 'gateway-device',
         scopes: FULL_OPERATOR_SCOPES,
@@ -511,7 +511,7 @@ describe('gateway detection and repair', () => {
       },
     }, null, 2));
 
-    writeFileSync(path.join(tempHome, '.openclaw', 'identity', 'device-auth.json'), JSON.stringify({
+    writeFileSync(path.join(tempHome, '.ZeroClaw', 'identity', 'device-auth.json'), JSON.stringify({
       version: 1,
       deviceId: 'gateway-device',
       tokens: {
@@ -530,7 +530,7 @@ describe('gateway detection and repair', () => {
   });
 
   it('requests a gateway scope repair when the local targeted identity token scopes are stale', async () => {
-    writeFileSync(path.join(tempHome, '.openclaw', 'devices', 'paired.json'), JSON.stringify({
+    writeFileSync(path.join(tempHome, '.ZeroClaw', 'devices', 'paired.json'), JSON.stringify({
       'gateway-device': {
         deviceId: 'gateway-device',
         scopes: FULL_OPERATOR_SCOPES,
@@ -552,7 +552,7 @@ describe('gateway detection and repair', () => {
       },
     }, null, 2));
 
-    writeFileSync(path.join(tempHome, '.openclaw', 'identity', 'device-auth.json'), JSON.stringify({
+    writeFileSync(path.join(tempHome, '.ZeroClaw', 'identity', 'device-auth.json'), JSON.stringify({
       version: 1,
       deviceId: 'gateway-device',
       tokens: {
@@ -571,7 +571,7 @@ describe('gateway detection and repair', () => {
   });
 
   it('does not request a blanket scope repair just because an unrelated paired device is under-scoped', async () => {
-    writeFileSync(path.join(tempHome, '.openclaw', 'devices', 'paired.json'), JSON.stringify({
+    writeFileSync(path.join(tempHome, '.ZeroClaw', 'devices', 'paired.json'), JSON.stringify({
       'gateway-device': {
         deviceId: 'gateway-device',
         scopes: FULL_OPERATOR_SCOPES,
@@ -593,7 +593,7 @@ describe('gateway detection and repair', () => {
       },
     }, null, 2));
 
-    writeFileSync(path.join(tempHome, '.openclaw', 'identity', 'device-auth.json'), JSON.stringify({
+    writeFileSync(path.join(tempHome, '.ZeroClaw', 'identity', 'device-auth.json'), JSON.stringify({
       version: 1,
       deviceId: 'gateway-device',
       tokens: {

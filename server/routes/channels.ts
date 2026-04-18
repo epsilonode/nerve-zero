@@ -1,7 +1,7 @@
 /**
- * GET /api/channels — List messaging channels configured in OpenClaw.
+ * GET /api/channels — List messaging channels configured in ZeroClaw.
  *
- * Reads channel keys from ~/.openclaw/openclaw.json. Returns an array
+ * Reads channel keys from ~/.ZeroClaw/ZeroClaw.json. Returns an array
  * of channel names (e.g. ["whatsapp", "discord"]).
  * Cached for 5 minutes to avoid repeated disk reads.
  */
@@ -20,10 +20,10 @@ interface ChannelsCache {
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 let cache: ChannelsCache | null = null;
 
-/** Read configured channel names from openclaw.json. */
+/** Read configured channel names from ZeroClaw.json. */
 async function readConfiguredChannels(): Promise<string[]> {
   try {
-    const configPath = join(homedir(), '.openclaw', 'openclaw.json');
+    const configPath = join(homedir(), '.ZeroClaw', 'ZeroClaw.json');
     const raw = await readFile(configPath, 'utf-8');
     const config = JSON.parse(raw) as { channels?: Record<string, unknown> };
     if (!config.channels || typeof config.channels !== 'object') return [];

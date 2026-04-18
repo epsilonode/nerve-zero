@@ -9,16 +9,12 @@ describe('file-browser routes', () => {
   let homeDir: string;
   let tmpDir: string;
   let researchWorkspace: string;
-  let remoteHomeDir: string;
-  let remoteWorkspace: string;
 
   beforeEach(async () => {
     vi.resetModules();
     homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'fbrowser-test-'));
-    tmpDir = path.join(homeDir, '.openclaw', 'workspace');
-    researchWorkspace = path.join(homeDir, '.openclaw', 'workspace-research');
-    remoteHomeDir = path.join(homeDir, 'remote-nonexistent');
-    remoteWorkspace = path.join(remoteHomeDir, '.openclaw', 'workspace');
+    tmpDir = path.join(homeDir, '.ZeroClaw', 'workspace');
+    researchWorkspace = path.join(homeDir, '.ZeroClaw', 'workspace-research');
     await fs.mkdir(tmpDir, { recursive: true });
     // Create a MEMORY.md in the tmpDir so getWorkspaceRoot returns tmpDir
     await fs.writeFile(path.join(tmpDir, 'MEMORY.md'), '# Memories\n');
@@ -29,43 +25,21 @@ describe('file-browser routes', () => {
     await fs.rm(homeDir, { recursive: true, force: true });
   });
 
-  async function buildApp(opts?: {
-    fileBrowserRoot?: string;
-    remote?: boolean;
-    gatewayFilesListResult?: Array<{ name: string; missing?: boolean; size?: number; updatedAtMs?: number }>;
-  }) {
+  async function buildApp(opts?: { fileBrowserRoot?: string }) {
     vi.resetModules();
-    vi.doUnmock('../lib/gateway-rpc.js');
-
-    const useRemote = opts?.remote ?? false;
-    const configuredHomeDir = useRemote ? remoteHomeDir : homeDir;
-    const configuredWorkspace = useRemote ? remoteWorkspace : tmpDir;
-
     vi.doMock('../lib/config.js', () => ({
       config: {
         auth: false,
         port: 3000,
         host: '127.0.0.1',
         sslPort: 3443,
-        home: configuredHomeDir,
-        memoryPath: path.join(configuredWorkspace, 'MEMORY.md'),
-        memoryDir: path.join(configuredWorkspace, 'memory'),
+        home: homeDir,
+        memoryPath: path.join(tmpDir, 'MEMORY.md'),
+        memoryDir: path.join(tmpDir, 'memory'),
         fileBrowserRoot: opts?.fileBrowserRoot ?? '',
-        workspaceRemote: false,
       },
       SESSION_COOKIE_NAME: 'nerve_session_3000',
     }));
-
-    if (useRemote) {
-      vi.doMock('../lib/gateway-rpc.js', () => ({
-        gatewayFilesList: vi.fn().mockResolvedValue(opts?.gatewayFilesListResult ?? []),
-        gatewayFilesGet: vi.fn(),
-        gatewayFilesSet: vi.fn(),
-      }));
-
-      const detectMod = await import('../lib/workspace-detect.js');
-      detectMod.clearWorkspaceDetectCache();
-    }
 
     const mod = await import('./file-browser.js');
     const app = new Hono();
@@ -114,56 +88,6 @@ describe('file-browser routes', () => {
       const names = json.entries.map(e => e.name);
       expect(names).not.toContain('node_modules');
       expect(names).not.toContain('.git');
-    });
-
-    it('hides hidden workspace entries by default', async () => {
-      await fs.writeFile(path.join(tmpDir, '.hidden.md'), 'secret');
-      await fs.writeFile(path.join(tmpDir, 'visible.md'), 'hello');
-
-      const app = await buildApp();
-      const res = await app.request('/api/files/tree');
-      expect(res.status).toBe(200);
-      const json = (await res.json()) as { ok: boolean; entries: Array<{ name: string }> };
-      const names = json.entries.map(e => e.name);
-
-      expect(names).toContain('visible.md');
-      expect(names).not.toContain('.hidden.md');
-    });
-
-    it('includes hidden workspace entries when showHidden=true', async () => {
-      await fs.writeFile(path.join(tmpDir, '.hidden.md'), 'secret');
-      await fs.mkdir(path.join(tmpDir, '.plans'));
-
-      const app = await buildApp();
-      const res = await app.request('/api/files/tree?showHidden=true');
-      expect(res.status).toBe(200);
-      const json = (await res.json()) as { ok: boolean; entries: Array<{ name: string }> };
-      const names = json.entries.map(e => e.name);
-
-      expect(names).toContain('.hidden.md');
-      expect(names).toContain('.plans');
-    });
-
-    it('includes hidden workspace entries when showHidden=true via remote gateway fallback', async () => {
-      const app = await buildApp({
-        remote: true,
-        gatewayFilesListResult: [
-          { name: '.hidden.md', missing: false, size: 6, updatedAtMs: 1000 },
-          { name: '.plans', missing: false, size: 0, updatedAtMs: 1001 },
-          { name: 'visible.md', missing: false, size: 5, updatedAtMs: 1002 },
-        ],
-      });
-
-      const res = await app.request('/api/files/tree?showHidden=true');
-      expect(res.status).toBe(200);
-      const json = (await res.json()) as { ok: boolean; entries: Array<{ name: string }>; remoteWorkspace?: boolean };
-      const names = json.entries.map((e) => e.name);
-
-      expect(json.ok).toBe(true);
-      expect(json.remoteWorkspace).toBe(true);
-      expect(names).toContain('.hidden.md');
-      expect(names).toContain('.plans');
-      expect(names).toContain('visible.md');
     });
   });
 
@@ -248,51 +172,6 @@ describe('file-browser routes', () => {
       expect(res.status).toBe(200);
       const json = (await res.json()) as { ok: boolean; path: string; type: string; binary: boolean };
       expect(json).toEqual({ ok: true, path: 'src/main.ts', type: 'file', binary: false });
-    });
-
-    it('accepts absolute host paths rooted at the real workspace by normalizing them to workspace-relative', async () => {
-      await fs.mkdir(path.join(tmpDir, 'src'));
-      await fs.writeFile(path.join(tmpDir, 'src', 'main.ts'), 'export {};');
-      const app = await buildApp();
-      const absoluteTarget = path.join(tmpDir, 'src', 'main.ts').split(path.sep).join('/');
-
-      const res = await app.request(`/api/files/resolve?path=${encodeURIComponent(absoluteTarget)}`);
-      expect(res.status).toBe(200);
-      const json = (await res.json()) as { ok: boolean; path: string; type: string; binary: boolean };
-      expect(json).toEqual({ ok: true, path: 'src/main.ts', type: 'file', binary: false });
-    });
-
-    it('accepts symlink-expanded absolute host paths for the same workspace root', async () => {
-      await fs.mkdir(path.join(tmpDir, 'src'));
-      await fs.writeFile(path.join(tmpDir, 'src', 'main.ts'), 'export {};');
-      const app = await buildApp();
-      const realTarget = (await fs.realpath(path.join(tmpDir, 'src', 'main.ts'))).split(path.sep).join('/');
-
-      const res = await app.request(`/api/files/resolve?path=${encodeURIComponent(realTarget)}`);
-      expect(res.status).toBe(200);
-      const json = (await res.json()) as { ok: boolean; path: string; type: string; binary: boolean };
-      expect(json).toEqual({ ok: true, path: 'src/main.ts', type: 'file', binary: false });
-    });
-
-    it('keeps absolute host workspace paths rooted even when relativeTo is provided', async () => {
-      await fs.mkdir(path.join(tmpDir, 'src'));
-      await fs.mkdir(path.join(tmpDir, 'notes'));
-      await fs.writeFile(path.join(tmpDir, 'src', 'main.ts'), 'export {};');
-      const app = await buildApp();
-      const absoluteTarget = path.join(tmpDir, 'src', 'main.ts').split(path.sep).join('/');
-
-      const res = await app.request(`/api/files/resolve?path=${encodeURIComponent(absoluteTarget)}&relativeTo=notes/index.md`);
-      expect(res.status).toBe(200);
-      const json = (await res.json()) as { ok: boolean; path: string; type: string; binary: boolean };
-      expect(json).toEqual({ ok: true, path: 'src/main.ts', type: 'file', binary: false });
-    });
-
-    it('treats the absolute workspace root itself as a non-openable root target', async () => {
-      const app = await buildApp();
-      const absoluteRoot = tmpDir.split(path.sep).join('/');
-
-      const res = await app.request(`/api/files/resolve?path=${encodeURIComponent(absoluteRoot)}`);
-      expect(res.status).toBe(404);
     });
 
     it('returns 403 for invalid or excluded targets', async () => {

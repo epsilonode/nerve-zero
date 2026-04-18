@@ -1,6 +1,6 @@
 # Deployment: Remote Gateway + Local Nerve
 
-Nerve runs on your laptop, Gateway runs on a cloud host. Good when you want local UI responsiveness but your OpenClaw runtime lives in the cloud.
+Nerve runs on your laptop, Gateway runs on a cloud host. Good when you want local UI responsiveness but your ZeroClaw runtime lives in the cloud.
 
 ## Topology
 
@@ -13,7 +13,7 @@ Browser (localhost) → Nerve local (127.0.0.1:3080) → Gateway cloud (<host>:1
 - Nerve installed on your laptop
 - Cloud Gateway reachable from your laptop
 - Gateway token from the cloud host
-- Access to cloud host config (`~/.openclaw/openclaw.json`)
+- Access to cloud host config (`~/.ZeroClaw/ZeroClaw.json`)
 
 ## Recommended network approach
 
@@ -26,7 +26,7 @@ Use a private network path (Tailscale, WireGuard, SSH tunnel, or private VPC). A
 On the cloud host:
 
 ```bash
-openclaw gateway status
+ZeroClaw gateway status
 curl -sS http://127.0.0.1:18789/health
 ```
 
@@ -34,7 +34,7 @@ curl -sS http://127.0.0.1:18789/health
 
 ```bash
 cd ~/nerve
-npm run setup
+bun run setup
 ```
 
 When prompted:
@@ -54,7 +54,7 @@ Restart Nerve after.
 
 ### 4. Patch remote gateway allowed origins
 
-On the cloud host, add your local Nerve origin to the gateway allowlist in `~/.openclaw/openclaw.json`:
+On the cloud host, add your local Nerve origin to the gateway allowlist in `~/.ZeroClaw/ZeroClaw.json`:
 
 - `http://localhost:3080`
 - `http://127.0.0.1:3080`

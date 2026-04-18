@@ -19,7 +19,8 @@ import { rateLimitGeneral } from '../middleware/rate-limit.js';
 import { InvalidAgentIdError, resolveAgentWorkspace } from '../lib/agent-workspace.js';
 import { isWorkspaceLocal } from '../lib/workspace-detect.js';
 import { gatewayFilesList, gatewayFilesGet, gatewayFilesSet } from '../lib/gateway-rpc.js';
-import { createChatPathLinksTemplate } from '../lib/chat-path-links-config.js';
+
+const DEFAULT_CHAT_PATH_LINKS_CONTENT = JSON.stringify({ prefixes: ['/workspace/'] }, null, 2);
 
 const app = new Hono();
 
@@ -33,6 +34,12 @@ const FILE_MAP: Record<string, string> = {
   heartbeat: 'HEARTBEAT.md',
   chatPathLinks: 'CHAT_PATH_LINKS.json',
 };
+
+function requiredParam(c: { req: { param(name: string): string | undefined } }, name: string): string {
+  const value = c.req.param(name);
+  if (!value) throw new Error(`Missing route parameter: ${name}`);
+  return value;
+}
 
 function getWorkspaceRoot(agentId?: string): { agentId: string; workspaceRoot: string } {
   const workspace = resolveAgentWorkspace(agentId);
@@ -55,41 +62,19 @@ app.get('/api/workspace/:key', rateLimitGeneral, async (c) => {
     return handleAgentWorkspaceError(c, err);
   }
 
-  const key = c.req.param('key');
+  const key = requiredParam(c, 'key');
   const filename = FILE_MAP[key];
   if (!filename) return c.json({ ok: false, error: 'Unknown file key' }, 400);
 
   const filePath = path.join(workspace.workspaceRoot, filename);
-  const workspaceIsLocal = await isWorkspaceLocal(workspace.workspaceRoot);
 
-  if (workspaceIsLocal) {
-    try {
-      await fs.access(filePath);
-      const content = await readText(filePath);
-      return c.json({ ok: true, content });
-    } catch (err) {
-      const isMissingChatPathLinks = key === 'chatPathLinks'
-        && (err as NodeJS.ErrnoException | undefined)?.code === 'ENOENT';
-
-      if (isMissingChatPathLinks) {
-        const content = createChatPathLinksTemplate({
-          platform: process.platform,
-          homeDir: process.env.HOME,
-          username: process.env.USER ?? process.env.LOGNAME,
-          workspaceRoot: workspace.workspaceRoot,
-        });
-
-        try {
-          await fs.mkdir(path.dirname(filePath), { recursive: true });
-          await fs.writeFile(filePath, content, 'utf-8');
-          console.warn(`[workspace] Missing ${filename}; regenerated local default template at ${filePath}`);
-          return c.json({ ok: true, content });
-        } catch (writeErr) {
-          console.warn('[workspace] Failed to regenerate local chat path links config:', (writeErr as Error).message);
-        }
-      }
-      // Local failed — try gateway fallback
-    }
+  // Try local first
+  try {
+    await fs.access(filePath);
+    const content = await readText(filePath);
+    return c.json({ ok: true, content });
+  } catch {
+    // Local failed — try gateway fallback
   }
 
   try {
@@ -99,6 +84,10 @@ app.get('/api/workspace/:key', rateLimitGeneral, async (c) => {
     }
   } catch (err) {
     console.warn('[workspace] Gateway fallback failed:', (err as Error).message);
+  }
+
+  if (key === 'chatPathLinks') {
+    return c.json({ ok: true, content: DEFAULT_CHAT_PATH_LINKS_CONTENT });
   }
 
   return c.json({ ok: false, error: 'File not found' }, 404);
@@ -119,7 +108,7 @@ app.put('/api/workspace/:key', rateLimitGeneral, async (c) => {
     return handleAgentWorkspaceError(c, err);
   }
 
-  const key = c.req.param('key');
+  const key = requiredParam(c, 'key');
   const filename = FILE_MAP[key];
   if (!filename) return c.json({ ok: false, error: 'Unknown file key' }, 400);
 
@@ -176,6 +165,9 @@ app.get('/api/workspace', rateLimitGeneral, async (c) => {
         exists = true;
       } catch {
         // not found
+        if (key === 'chatPathLinks') {
+          exists = true;
+        }
       }
       files.push({ key, filename, exists });
     }
@@ -188,7 +180,7 @@ app.get('/api/workspace', rateLimitGeneral, async (c) => {
 
       for (const [key, filename] of Object.entries(FILE_MAP)) {
         const remote = remoteByName.get(filename);
-        files.push({ key, filename, exists: !!remote && !remote.missing });
+        files.push({ key, filename, exists: key === 'chatPathLinks' ? true : !!remote && !remote.missing });
       }
     } catch (err) {
       console.warn('[workspace] Gateway list fallback failed:', (err as Error).message);

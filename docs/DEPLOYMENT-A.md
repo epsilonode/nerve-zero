@@ -10,8 +10,8 @@ Browser (localhost) → Nerve (127.0.0.1:3080) → Gateway (127.0.0.1:18789)
 
 ## Prerequisites
 
-- Node.js 22+
-- OpenClaw installed and gateway running
+- Bun 1.0+
+- ZeroClaw installed and gateway running
 - Local shell access
 
 ## Setup
@@ -19,7 +19,7 @@ Browser (localhost) → Nerve (127.0.0.1:3080) → Gateway (127.0.0.1:18789)
 ### 1. Install Nerve
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/daggerhashimoto/openclaw-nerve/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/daggerhashimoto/ZeroClaw-nerve/master/install.sh | bash
 ```
 
 ### 2. Run setup if needed
@@ -28,7 +28,7 @@ If `.env` is missing or wrong:
 
 ```bash
 cd ~/nerve
-npm run setup
+bun run setup
 ```
 
 Recommended choices:
@@ -42,13 +42,13 @@ Recommended choices:
 sudo systemctl restart nerve.service
 
 # or run directly
-npm run prod
+bun start
 ```
 
 ## Validation
 
 ```bash
-openclaw gateway status
+ZeroClaw gateway status
 curl -sS http://127.0.0.1:18789/health
 curl -sS http://127.0.0.1:3080/health
 ```
@@ -57,21 +57,21 @@ All three should succeed. Open `http://localhost:3080` in your browser.
 
 ## Common issues
 
-### Token mismatch after OpenClaw updates
+### Token mismatch after ZeroClaw updates
 
-After an OpenClaw update or re-onboard, the connect dialog may fail with auth errors.
+After an ZeroClaw update or re-onboard, the connect dialog may fail with auth errors.
 
-**Fix:** Re-run `npm run setup`, restart both services, and open a fresh browser tab.
+**Fix:** Re-run `bun run setup`, restart both services, and open a fresh browser tab.
 
 ### Missing scopes after first connect
 
 Chat connects but actions fail with "missing scope" errors.
 
-**Fix:** Re-run `npm run setup`, or manually approve the device:
+**Fix:** Re-run `bun run setup`, or manually approve the device:
 
 ```bash
-openclaw devices list
-openclaw devices approve <requestId>
+ZeroClaw devices list
+ZeroClaw devices approve <requestId>
 ```
 
 ### Browser keeps old credentials

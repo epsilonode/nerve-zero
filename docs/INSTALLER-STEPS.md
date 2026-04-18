@@ -3,7 +3,7 @@
 This document describes exactly what `install.sh` does, in the order it executes, including conditional branches.
 
 - Script: `install.sh`
-- Purpose: One-command install/update of **openclaw-nerve**
+- Purpose: One-command install/update of **ZeroClaw-nerve**
 - Primary entrypoint: `curl .../install.sh | bash`
 
 ---
@@ -42,7 +42,7 @@ It pre-detects platform family for package-manager logic:
 Defines output helpers (`ok`, `warn`, `fail`, `info`, `dry`) and utility functions:
 
 - `run_with_dots` for animated progress + exit capture (`RWD_EXIT`)
-- `detect_gateway_token` (systemd service token first, then `~/.openclaw/openclaw.json`)
+- `detect_gateway_token` (systemd service token first, then `~/.ZeroClaw/ZeroClaw.json`)
 - stage renderer (`stage`) for `[1/5]`, `[2/5]`, etc.
 
 ### 0.5 CLI argument parsing
@@ -95,9 +95,9 @@ The script runs these checks in order:
 - Verifies major version is `>=22`.
 - On failure, prints targeted upgrade guidance (nvm/Homebrew/etc.) and exits.
 
-### 1.2 `check_npm`
-- Verifies `npm` exists.
-- If missing, explains reinstall path and exits.
+### 1.2 `check_bun_pkg`
+- Verifies `bunx` exists.
+- If missing, explains the Bun reinstall path and exits.
 
 ### 1.3 `check_git`
 - Verifies `git` exists.
@@ -113,14 +113,14 @@ The script runs these checks in order:
   - macOS: triggers Xcode CLI tools install and waits
   - otherwise: prints manual install commands and exits
 
-### 1.5 `check_openclaw`
-- Verifies `openclaw` is in PATH.
+### 1.5 `check_ZeroClaw`
+- Verifies `ZeroClaw` is in PATH.
 - If not, searches common install locations (nvm, Homebrew, Volta, fnm, etc.).
 - If found in fallback path, prepends that directory to `PATH`.
 - If still missing, exits with install instructions.
 
 ### 1.6 `check_gateway`
-- Reads gateway port from `~/.openclaw/openclaw.json` (fallback 18789).
+- Reads gateway port from `~/.ZeroClaw/ZeroClaw.json` (fallback 18789).
 - Probes gateway (`/health` then `/`) and warns if unreachable.
 - Verifies gateway token exists (CLI arg or auto-detected).
 - Warns (does not hard fail) if token is missing.
@@ -156,8 +156,8 @@ The installer resolves a target ref before clone/update:
 
 ## 3) Stage 3/5 — Install & Build
 
-### 3.1 Dependency install (`npm ci`)
-- Runs `npm ci` with logs captured to temp file.
+### 3.1 Dependency install (`bun install`)
+- Runs `bun install` with logs captured to temp file.
 - On failure, prints last 10 lines + full log path.
 - Detects common error patterns and prints targeted troubleshooting:
   - permission errors
@@ -165,12 +165,12 @@ The installer resolves a target ref before clone/update:
   - dependency resolve conflicts
 
 ### 3.2 Project build
-- Runs `npm run build`.
+- Runs `bun run build`.
 - This already includes the server build through the package script.
 - On failure: prints last 10 log lines + full path + hints.
 
 ### 3.3 Temp log cleanup
-- Deletes npm/build temp log files on success.
+- Deletes bun install/build temp log files on success.
 
 ### 3.4 Local speech model bootstrap
 - Resolves target model from `.env` `WHISPER_MODEL` (defaults to `base`).
@@ -198,7 +198,7 @@ When called (and `.env` doesn’t already exist), it:
 1. Reads gateway token (`--gateway-token` first, then auto-detect)
 2. Resolves gateway URL:
    - `--gateway-url <url>` first (validated as absolute `http://` or `https://` URL)
-   - otherwise local gateway from `openclaw.json` port (fallback `http://127.0.0.1:18789`)
+   - otherwise local gateway from `ZeroClaw.json` port (fallback `http://127.0.0.1:18789`)
 3. Writes minimal `.env`:
    - `GATEWAY_URL=<resolved-url>`
    - `GATEWAY_TOKEN=<token>`
@@ -226,7 +226,7 @@ If token exists but port `3080` is already occupied:
 #### Interactive mode (no `--skip-setup`)
 - If `.env` exists:
   - ask: “Run setup wizard anyway?”
-  - if yes: run `NERVE_INSTALLER=1 npm run setup`
+  - if yes: run `NERVE_INSTALLER=1 bun run setup`
   - if no: keep existing config
 - If no `.env`:
   - run setup wizard
@@ -243,7 +243,7 @@ Behavior by interactive profile:
   - patches gateway allowed origins using the tailnet IP origin
 - `Tailscale Serve`
   - keeps Nerve on `127.0.0.1`
-  - asks whether to run `tailscale serve --bg http://127.0.0.1:<PORT>`
+  - asks whether to run `tailscale serve --bg 443 http://127.0.0.1:<PORT>`
   - detects the resulting `https://<node>.tail<id>.ts.net` origin
   - patches both Nerve and the gateway for that `*.ts.net` origin
   - if Serve cannot be confirmed, asks whether to fall back to `tailnet IP` or stop
@@ -261,7 +261,7 @@ If Tailscale is missing:
 - If `.env` exists: keep it.
 - If no `.env` and no explicit `--access-mode`: auto-generate from gateway.
 - If `--access-mode` is provided:
-  - route through `npm run setup -- --defaults --access-mode <mode>`
+  - route through `bun run setup -- --defaults --access-mode <mode>`
   - do not bypass setup with raw `.env` generation
 
 Non-interactive Tailscale behavior:
@@ -275,13 +275,12 @@ Non-interactive Tailscale behavior:
 
 ### 4.3 Gateway config patching (inside setup wizard)
 
-After `.env` is written, the setup wizard detects and applies pending OpenClaw gateway config changes. This uses a detection layer (`detectNeededConfigChanges`) that checks what needs changing without applying, then presents all changes as a bundled consent prompt.
+After `.env` is written, the setup wizard detects and applies pending ZeroClaw gateway config changes. This uses a detection layer (`detectNeededConfigChanges`) that checks what needs changing without applying, then presents all changes as a bundled consent prompt.
 
 #### Possible changes detected:
-1. **Device scopes** — bootstraps `~/.openclaw/devices/paired.json` with full operator scopes if missing or incomplete
-2. **Pre-pair Nerve device** — registers Nerve's Ed25519 identity in `paired.json` so it can connect without manual `openclaw devices approve`
-3. **Tools allow** — adds `"cron"`, `"gateway"`, and `"sessions_spawn"` to `gateway.tools.allow` in `~/.openclaw/openclaw.json` (required for OpenClaw ≥2026.2.23, which denies these tools on `/tools/invoke` by default; `sessions_spawn` is required for Kanban task execution)
-4. **Allowed origins** — adds all required Nerve browser origins to `gateway.controlUi.allowedOrigins`
+1. **Gateway pairing readiness** — ensures Nerve can complete the pair-code -> bearer-token onboarding flow cleanly
+2. **Tools allow** — adds `"cron"`, `"gateway"`, and `"sessions_spawn"` to `gateway.tools.allow` in the active ZeroClaw config when required
+3. **Allowed origins** — adds all required Nerve browser origins to `gateway.controlUi.allowedOrigins`
    - LAN or tailnet-IP mode: `http://<ip>:<port>`
    - Tailscale Serve mode: `https://<node>.tail<id>.ts.net`
 
@@ -330,7 +329,7 @@ Determines service user/home by:
 
 1. `SUDO_USER`/`USER`
 2. `getent` home lookup (if via sudo)
-3. fallback heuristic: infer user from `openclaw` binary path under `/home/<user>/...`
+3. fallback heuristic: infer user from `ZeroClaw` binary path under `/home/<user>/...`
 
 ### 5A.3 Root vs non-root behavior
 - If root:
@@ -355,7 +354,7 @@ Creates `<INSTALL_DIR>/start.sh` that:
 
 - changes into `<INSTALL_DIR>` first so manual invocation resolves `.env` the same way as the service
 - sets `NODE_ENV=production`
-- executes `node server-dist/index.js`
+- executes `bun server-dist/index.js`
 
 The Node server loads `.env` at runtime, so config updates still take effect on restart without rewriting the plist.
 

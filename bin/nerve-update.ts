@@ -1,13 +1,13 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 /**
  * nerve-update — one-command updater for Nerve.
  *
  * Usage:
- *   npm run update
- *   npm run update -- --version v1.4.0
- *   npm run update -- --dry-run
- *   npm run update -- --rollback
+ *   bun run update
+ *   bun run update -- --version v1.4.0
+ *   bun run update -- --dry-run
+ *   bun run update -- --rollback
  */
 
 import { resolve } from 'node:path';
@@ -18,7 +18,7 @@ import type { UpdateOptions } from '../server/lib/updater/index.js';
 // ── Project root detection ───────────────────────────────────────────
 
 function findProjectRoot(): string {
-  // When run via `npm run update`, cwd is the project root.
+  // When run via `bun run update`, cwd is the project root.
   // Walk up from cwd looking for package.json as a safety net.
   let dir = process.cwd();
   for (let i = 0; i < 10; i++) {

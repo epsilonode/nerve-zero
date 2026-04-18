@@ -170,7 +170,7 @@ Returns the application name and version from `package.json`.
 ```json
 {
   "version": "1.3.0",
-  "name": "openclaw-nerve"
+  "name": "ZeroClaw-nerve"
 }
 ```
 
@@ -867,7 +867,7 @@ All fields are optional. A `ts` (epoch ms) is automatically set on write. The lo
 
 ### `GET /api/gateway/models`
 
-Returns the models defined in the active OpenClaw config. This endpoint is config-backed now, not CLI-discovered or cache-backed.
+Returns the models defined in the active ZeroClaw config. This endpoint is config-backed now, not CLI-discovered or cache-backed.
 
 **Rate Limit:** General (60/min)
 
@@ -891,7 +891,7 @@ Returns the models defined in the active OpenClaw config. This endpoint is confi
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `models` | `array` | Configured models from `agents.defaults.model` and `agents.defaults.models` in the active OpenClaw config |
+| `models` | `array` | Configured models from `agents.defaults.model` and `agents.defaults.models` in the active ZeroClaw config |
 | `error` | `string \| null` | Read error or configuration problem, for example config unreadable or no configured models |
 | `source` | `"config"` | Identifies the backing source |
 
@@ -963,7 +963,7 @@ HTTP fallback for **model changes** when the frontend cannot apply `sessions.pat
 
 ### `POST /api/gateway/restart`
 
-Restarts the OpenClaw gateway service, then waits for the service to report healthy status and for the gateway port to become reachable.
+Restarts the ZeroClaw gateway service, then waits for the service to report healthy status and for the gateway port to become reachable.
 
 **Rate Limit:** Restart (3/min)
 
@@ -1113,7 +1113,7 @@ Content must be a string, max 100 KB.
 
 ## Cron Jobs
 
-All cron routes proxy to the OpenClaw gateway via `invokeGatewayTool('cron', ...)`.
+All cron routes proxy to the ZeroClaw gateway via `invokeGatewayTool('cron', ...)`.
 
 **Rate Limit:** General (60/min) on all endpoints.
 
@@ -1177,9 +1177,9 @@ Returns the last 10 run history entries for a cron job.
 
 ### `GET /api/skills`
 
-Lists all OpenClaw skills via `openclaw skills list --json` for the selected workspace agent.
+Lists all ZeroClaw skills via `ZeroClaw skills list --json` for the selected workspace agent.
 
-Nerve scopes this by creating a temporary OpenClaw config whose `agents.defaults.workspace` points at the selected agent workspace, then runs the CLI against that workspace.
+Nerve scopes this by creating a temporary ZeroClaw config whose `agents.defaults.workspace` points at the selected agent workspace, then runs the CLI against that workspace.
 
 **Rate Limit:** General (60/min)
 
@@ -1202,7 +1202,7 @@ Nerve scopes this by creating a temporary OpenClaw config whose `agents.defaults
       "eligible": true,
       "disabled": false,
       "blockedByAllowlist": false,
-      "source": "/home/user/.openclaw/skills/web-search",
+      "source": "/home/user/.ZeroClaw/skills/web-search",
       "bundled": true,
       "homepage": "https://github.com/example/skill"
     }
@@ -1251,7 +1251,7 @@ Returns the workspace directory tree. Excludes `node_modules`, `.git`, `dist`, `
   ],
   "workspaceInfo": {
     "isCustomWorkspace": false,
-    "rootPath": "/home/user/.openclaw/workspace"
+    "rootPath": "/home/user/.ZeroClaw/workspace"
   }
 }
 ```
@@ -1391,12 +1391,12 @@ Serves local image files with strict security controls. See [SECURITY.md](./SECU
 
 ```
 GET /api/files?path=/tmp/screenshot.png
-GET /api/files?path=~/.openclaw/workspace/memory/image.jpg
+GET /api/files?path=~/.ZeroClaw/workspace/memory/image.jpg
 ```
 
 **Allowed file types:** `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.avif`
 
-**Allowed directory prefixes:** `/tmp`, `~/.openclaw`, the configured `MEMORY_DIR`
+**Allowed directory prefixes:** `/tmp`, `~/.ZeroClaw`, the configured `MEMORY_DIR`
 
 **Response:** Raw image binary with appropriate `Content-Type` header and 1-hour cache.
 
@@ -1731,7 +1731,7 @@ Execute a task and move it to `in-progress`. The launch path depends on the task
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `model` | `string` | No | Execution model override (max 200 chars). Cascade: execute request → task `model` → board `defaultModel` → OpenClaw configured default |
+| `model` | `string` | No | Execution model override (max 200 chars). Cascade: execute request → task `model` → board `defaultModel` → ZeroClaw configured default |
 | `thinking` | `string` | No | Thinking override: `off`, `low`, `medium`, `high` |
 
 **Response:** The updated `KanbanTask` object with `status: "in-progress"` and a `run` object.

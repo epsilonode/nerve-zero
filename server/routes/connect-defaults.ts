@@ -11,31 +11,46 @@
  */
 
 import { Hono } from 'hono';
+import type { IncomingMessage } from 'node:http';
 import { config } from '../lib/config.js';
 import { rateLimitGeneral } from '../middleware/rate-limit.js';
 import { canInjectGatewayToken } from '../lib/trust-utils.js';
-import { getConnInfo } from '@hono/node-server/conninfo';
 
 const app = new Hono();
 
-app.get('/api/connect-defaults', rateLimitGeneral, (c) => {
+app.get('/api/connect-defaults', rateLimitGeneral, async (c) => {
   // Derive WebSocket URL from the HTTP gateway URL
   const gwUrl = config.gatewayUrl;
   let wsUrl = '';
   try {
     const parsed = new URL(gwUrl);
     const wsProtocol = parsed.protocol === 'https:' ? 'wss:' : 'ws:';
-    wsUrl = `${wsProtocol}//${parsed.host}/ws`;
+    wsUrl = `${wsProtocol}//${parsed.host}/ws/chat`;
   } catch {
     wsUrl = gwUrl.replace(/^http/, 'ws');
   }
 
   let remoteAddress: string | undefined;
   try {
-    const info = getConnInfo(c);
-    remoteAddress = info.remote.address;
+    const incoming = (c.env as { incoming?: IncomingMessage })?.incoming;
+    remoteAddress = incoming?.socket?.remoteAddress;
   } catch {
-    // getConnInfo may fail in test environments
+    // may fail in test environments
+  }
+
+  const serverSideAuth = canInjectGatewayToken({
+    socket: { remoteAddress },
+    headers: c.req.header(),
+  });
+
+  let gatewayReachable = false;
+  try {
+    const res = await fetch(`${config.gatewayUrl}/health`, {
+      signal: AbortSignal.timeout(1500),
+    });
+    gatewayReachable = res.ok;
+  } catch {
+    // gateway unreachable - keep handshake UI available
   }
 
   return c.json({
@@ -43,10 +58,9 @@ app.get('/api/connect-defaults', rateLimitGeneral, (c) => {
     token: null, // Token injection moved server-side (ws-proxy.ts)
     agentName: config.agentName,
     authEnabled: config.auth,
-    serverSideAuth: canInjectGatewayToken({
-      socket: { remoteAddress },
-      headers: c.req.header(),
-    }),
+    serverSideAuth,
+    gatewayReachable,
+    handshakeRequired: !serverSideAuth || !gatewayReachable,
   });
 });
 

@@ -19,15 +19,15 @@ git remote set-url origin https://github.com/<owner>/<repo>.git
 ## Quick start
 
 ```bash
-npm run update -- --yes
+bun run update -- --yes
 ```
 
 This will:
-1. Check prerequisites (git, Node.js, npm, and an HTTPS GitHub `origin` remote)
+1. Check prerequisites (git, Bun, and an HTTPS GitHub `origin` remote)
 2. Resolve the latest published GitHub release (fallback: latest semver tag)
 3. Snapshot the current state for rollback
 4. `git fetch --tags && git checkout <tag>`
-5. `npm install && npm run build && npm run build:server`
+5. `bun install && bun run build && bun run build:server`
 6. Restart the systemd/launchd service
 7. Verify `/health` and `/api/version` match the target
 
@@ -47,16 +47,16 @@ This will:
 
 ```bash
 # Preview what an update would do
-npm run update -- --dry-run
+bun run update -- --dry-run
 
 # Update to a specific version
-npm run update -- --version v1.4.0 --yes
+bun run update -- --version v1.4.0 --yes
 
 # Rollback to the previous version
-npm run update -- --rollback
+bun run update -- --rollback
 
 # Update without restarting (e.g. to restart manually)
-npm run update -- --yes --no-restart
+bun run update -- --yes --no-restart
 ```
 
 ## Exit codes
@@ -65,9 +65,9 @@ npm run update -- --yes --no-restart
 |------|---------|
 | 0 | Success |
 | 1 | Already up to date |
-| 10 | Preflight failure (missing git/node/npm) |
+| 10 | Preflight failure (missing git or Bun) |
 | 20 | Version resolution failure (release/tag not found) |
-| 40 | Build failure (npm install or build step) |
+| 40 | Build failure (bun install or build step) |
 | 50 | Service restart failure |
 | 60 | Health check failure (service unhealthy or version mismatch) |
 | 70 | Rollback failure (critical — manual intervention needed) |
@@ -79,7 +79,7 @@ npm run update -- --yes --no-restart
 
 ```
 lock → preflight → resolve → confirm → snapshot → git checkout
-  → npm install + build → restart → health check → done
+  → bun install + build → restart → health check → done
 ```
 
 Each stage has a dedicated exit code. If any stage after snapshot fails, the updater attempts an automatic rollback.
@@ -101,7 +101,7 @@ Rollback restores the snapshot ref, cleans `node_modules`, rebuilds, and restart
 The rollback flow:
 1. `git checkout --force <snapshot-ref>`
 2. Remove `node_modules` (clean slate)
-3. `npm install && npm run build && npm run build:server`
+3. `bun install && bun run build && bun run build:server`
 4. Restart and verify the service
 
 ### Health checks
@@ -194,12 +194,12 @@ curl http://127.0.0.1:3080/api/version
 
 ### Build failure after checkout
 
-`npm install` or `npm run build` failed on the new version.
+`bun install` or `bun run build` failed on the new version.
 
 **Fix:** The updater will attempt automatic rollback. If rollback also fails (exit 70), restore manually:
 ```bash
 cat ~/.nerve/updater/last-good.json           # Get the snapshot ref
 git checkout --force <ref>
-npm install && npm run build && npm run build:server
+bun install && bun run build && bun run build:server
 systemctl restart nerve
 ```

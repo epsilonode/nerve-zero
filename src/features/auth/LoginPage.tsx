@@ -51,7 +51,7 @@ export function LoginPage({ onLogin, error }: LoginPageProps) {
               Sign in to your agent control surface
             </h1>
             <p className="mt-4 max-w-[48ch] text-sm leading-6 text-muted-foreground sm:text-base">
-              Nerve is the high visibility workspace for OpenClaw agents. Authenticate once, then manage chats, tasks, files, memory, and telemetry from one place.
+              Nerve is the high visibility workspace for ZeroClaw agents. Authenticate once, then manage chats, tasks, files, memory, and telemetry from one place.
             </p>
 
             <div className="mt-8 grid gap-3 sm:grid-cols-3">

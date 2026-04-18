@@ -15,7 +15,6 @@ export interface Session {
   key?: string;
   id?: string;
   label?: string;
-  identityName?: string;
   state?: string;
   agentState?: string;
   busy?: boolean;

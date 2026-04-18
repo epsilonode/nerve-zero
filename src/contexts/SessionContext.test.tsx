@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import { SessionProvider, useSessionContext } from './SessionContext';
 import { getSessionKey, type GatewayEvent } from '@/types';
-import { getSessionDisplayLabel } from '@/features/sessions/sessionKeys';
 
 const mockUseGateway = vi.fn();
 const mockUseSettings = vi.fn();
@@ -42,28 +41,6 @@ function SessionLabels() {
         <div key={getSessionKey(session)}>{session.label || session.displayName || getSessionKey(session)}</div>
       ))}
     </div>
-  );
-}
-
-function SessionDisplayLabels() {
-  const { sessions, agentName } = useSessionContext();
-
-  return (
-    <div>
-      {sessions.map((session) => (
-        <div key={getSessionKey(session)}>{getSessionDisplayLabel(session, agentName)}</div>
-      ))}
-    </div>
-  );
-}
-
-function SessionRefreshProbe() {
-  const { refreshSessions } = useSessionContext();
-
-  return (
-    <button data-testid="refresh-sessions" onClick={() => void refreshSessions()}>
-      Refresh sessions
-    </button>
   );
 }
 
@@ -367,73 +344,6 @@ describe('SessionContext', () => {
     expect(spawnRouteCalled).toBe(false);
   });
 
-  it('clears the root thinking override when spawnSession is called without an explicit thinking level', async () => {
-    rpcMock.mockImplementation(async (method: string) => {
-      if (method === 'sessions.list') {
-        return { sessions: [{ sessionKey: 'agent:main:main', label: 'Main' }] };
-      }
-      return {};
-    });
-
-    function SpawnRootDefaultThinking() {
-      const { spawnSession } = useSessionContext();
-      return (
-        <button
-          data-testid="spawn-root-default-thinking"
-          onClick={() => spawnSession({ kind: 'root', agentName: 'DefaultThink', task: 'hi' })}
-        />
-      );
-    }
-
-    render(<SessionProvider><SpawnRootDefaultThinking /></SessionProvider>);
-    await waitFor(() => expect(rpcMock).toHaveBeenCalled());
-
-    await act(async () => {
-      screen.getByTestId('spawn-root-default-thinking').click();
-    });
-
-    await waitFor(() => {
-      expect(rpcMock).toHaveBeenCalledWith('sessions.patch', expect.objectContaining({
-        key: 'agent:defaultthink:main',
-        label: 'DefaultThink',
-        thinkingLevel: null,
-      }));
-    });
-  });
-
-  it.each(['off', 'adaptive'])('preserves explicit %s thinking when spawning a root agent', async (thinking) => {
-    rpcMock.mockImplementation(async (method: string) => {
-      if (method === 'sessions.list') {
-        return { sessions: [{ sessionKey: 'agent:main:main', label: 'Main' }] };
-      }
-      return {};
-    });
-
-    function SpawnRootExplicitThinking() {
-      const { spawnSession } = useSessionContext();
-      return (
-        <button
-          data-testid={`spawn-root-${thinking}`}
-          onClick={() => spawnSession({ kind: 'root', agentName: `Think ${thinking}`, task: 'hi', thinking })}
-        />
-      );
-    }
-
-    render(<SessionProvider><SpawnRootExplicitThinking /></SessionProvider>);
-    await waitFor(() => expect(rpcMock).toHaveBeenCalled());
-
-    await act(async () => {
-      screen.getByTestId(`spawn-root-${thinking}`).click();
-    });
-
-    await waitFor(() => {
-      expect(rpcMock).toHaveBeenCalledWith('sessions.patch', expect.objectContaining({
-        label: `Think ${thinking}`,
-        thinkingLevel: thinking,
-      }));
-    });
-  });
-
   it('uses a unique config name when spawning a duplicate root agent', async () => {
     rpcMock.mockImplementation(async (method: string) => {
       if (method === 'sessions.list') {
@@ -460,48 +370,11 @@ describe('SessionContext', () => {
     await waitFor(() => {
       expect(rpcMock).toHaveBeenCalledWith('agents.create', expect.objectContaining({
         name: 'Test 2',
-        workspace: '~/.openclaw/workspace-test-2',
+        workspace: '~/.ZeroClaw/workspace-test-2',
       }));
       expect(rpcMock).toHaveBeenCalledWith('sessions.patch', expect.objectContaining({
         key: 'agent:test-2:main',
         label: 'Test',
-      }));
-    });
-  });
-
-  it('uses the server-provided default workspace root when spawning a root agent', async () => {
-    globalThis.fetch = vi.fn((input: string | URL | Request) => {
-      const url = typeof input === 'string'
-        ? input
-        : input instanceof URL
-          ? input.toString()
-          : input.url;
-
-      if (url.includes('/api/server-info')) {
-        return Promise.resolve(jsonResponse({
-          agentName: 'Jen',
-          defaultAgentWorkspaceRoot: '/managed/workspaces',
-        }));
-      }
-      if (url.includes('/api/agentlog')) return Promise.resolve(jsonResponse([]));
-      if (url.includes('/api/sessions/hidden')) return Promise.resolve(jsonResponse({ ok: true, sessions: [] }));
-      return Promise.resolve(jsonResponse({}));
-    }) as typeof fetch;
-
-    function Spawn() {
-      const { spawnSession } = useSessionContext();
-      return <button data-testid="spawn-managed" onClick={() => spawnSession({
-        kind: 'root', agentName: 'Managed', task: 'hi', model: 'anthropic/claude-sonnet-4-5',
-      })} />;
-    }
-
-    render(<SessionProvider><Spawn /></SessionProvider>);
-    await waitFor(() => expect(rpcMock).toHaveBeenCalledWith('sessions.list', { limit: 1000 }));
-    screen.getByTestId('spawn-managed').click();
-    await waitFor(() => {
-      expect(rpcMock).toHaveBeenCalledWith('agents.create', expect.objectContaining({
-        name: 'Managed',
-        workspace: '/managed/workspaces/managed',
       }));
     });
   });
@@ -521,16 +394,43 @@ describe('SessionContext', () => {
     expect(rpcMock).not.toHaveBeenCalledWith('sessions.list', expect.objectContaining({ activeMinutes: expect.any(Number) }));
   });
 
-  it('hydrates root session labels from IDENTITY.md names', async () => {
-    rpcMock.mockImplementation(async (method: string) => {
+  it('keeps a newly spawned active child session visible after the authoritative refresh omits it', async () => {
+    let subagentSpawnRequested = false;
+    rpcMock.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
       if (method === 'sessions.list') {
+        if (params?.spawnedBy === 'agent:main:main') {
+          return {
+            sessions: subagentSpawnRequested
+              ? [
+                  { sessionKey: 'agent:main:main', label: 'Main' },
+                  { sessionKey: 'agent:main:subagent:new-child', label: 'New child', state: 'running' },
+                ]
+              : [
+                  { sessionKey: 'agent:main:main', label: 'Main' },
+                ],
+          };
+        }
+
+        if (params?.activeMinutes === 24 * 60) {
+          return {
+            sessions: subagentSpawnRequested
+              ? [
+                  { sessionKey: 'agent:main:main', label: 'Main' },
+                  { sessionKey: 'agent:main:subagent:new-child', label: 'New child', state: 'running' },
+                ]
+              : [
+                  { sessionKey: 'agent:main:main', label: 'Main' },
+                ],
+          };
+        }
+
         return {
           sessions: [
             { sessionKey: 'agent:main:main', label: 'Main' },
-            { sessionKey: 'agent:reviewer:main', displayName: 'stale reviewer label' },
           ],
         };
       }
+
       return {};
     });
 
@@ -541,141 +441,157 @@ describe('SessionContext', () => {
           ? input.toString()
           : input.url;
 
-      if (url.includes('/api/server-info')) return Promise.resolve(jsonResponse({ agentName: 'Jen' }));
-      if (url.includes('/api/workspace/identity?agentId=reviewer')) {
-        return Promise.resolve(jsonResponse({ ok: true, content: '# IDENTITY.md\n- Name: Reviewer Prime\n- Role: Review agent\n' }));
+      if (url.includes('/api/sessions/spawn-subagent')) {
+        subagentSpawnRequested = true;
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ ok: true, sessionKey: 'agent:main:subagent:new-child' }),
+        } as Response);
       }
+      if (url.includes('/api/server-info')) return Promise.resolve(jsonResponse({ agentName: 'Jen' }));
       if (url.includes('/api/agentlog')) return Promise.resolve(jsonResponse([]));
       if (url.includes('/api/sessions/hidden')) return Promise.resolve(jsonResponse({ ok: true, sessions: [] }));
       return Promise.resolve(jsonResponse({}));
     }) as typeof fetch;
 
-    render(
-      <SessionProvider>
-        <SessionDisplayLabels />
-      </SessionProvider>,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText('Jen (main)')).toBeInTheDocument();
-      expect(screen.getByText('Reviewer Prime (reviewer)')).toBeInTheDocument();
-    });
-  });
-
-
-  it('clears stale identity labels when a non-main root has no parseable identity name', async () => {
-    rpcMock.mockImplementation(async (method: string) => {
-      if (method === 'sessions.list') {
-        return {
-          sessions: [
-            { sessionKey: 'agent:main:main', label: 'Main' },
-            { sessionKey: 'agent:reviewer:main', identityName: 'Reviewer Prime' },
-          ],
-        };
-      }
-      return {};
-    });
-
-    globalThis.fetch = vi.fn((input: string | URL | Request) => {
-      const url = typeof input === 'string'
-        ? input
-        : input instanceof URL
-          ? input.toString()
-          : input.url;
-
-      if (url.includes('/api/server-info')) return Promise.resolve(jsonResponse({ agentName: 'Jen' }));
-      if (url.includes('/api/workspace/identity?agentId=reviewer')) {
-        return Promise.resolve(jsonResponse({ ok: true, content: '# IDENTITY.md\n- Role: Review agent\n' }));
-      }
-      if (url.includes('/api/agentlog')) return Promise.resolve(jsonResponse([]));
-      if (url.includes('/api/sessions/hidden')) return Promise.resolve(jsonResponse({ ok: true, sessions: [] }));
-      return Promise.resolve(jsonResponse({}));
-    }) as typeof fetch;
-
-    render(
-      <SessionProvider>
-        <SessionDisplayLabels />
-      </SessionProvider>,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText('Jen (main)')).toBeInTheDocument();
-      expect(screen.getByText('reviewer')).toBeInTheDocument();
-    });
-
-    expect(screen.queryByText('Reviewer Prime (reviewer)')).not.toBeInTheDocument();
-  });
-
-  it('does not refetch identity content for roots whose identity files have no parseable name', async () => {
-    rpcMock.mockImplementation(async (method: string) => {
-      if (method === 'sessions.list') {
-        return {
-          sessions: [
-            { sessionKey: 'agent:main:main', label: 'Main' },
-            { sessionKey: 'agent:reviewer:main', displayName: 'stale reviewer label' },
-          ],
-        };
-      }
-      return {};
-    });
-
-    const fetchSpy = vi.fn((input: string | URL | Request) => {
-      const url = typeof input === 'string'
-        ? input
-        : input instanceof URL
-          ? input.toString()
-          : input.url;
-
-      if (url.includes('/api/server-info')) return Promise.resolve(jsonResponse({ agentName: 'Jen' }));
-      if (url.includes('/api/workspace/identity?agentId=reviewer')) {
-        return Promise.resolve(jsonResponse({ ok: true, content: '# IDENTITY.md\n- Role: Review agent\n' }));
-      }
-      if (url.includes('/api/agentlog')) return Promise.resolve(jsonResponse([]));
-      if (url.includes('/api/sessions/hidden')) return Promise.resolve(jsonResponse({ ok: true, sessions: [] }));
-      return Promise.resolve(jsonResponse({}));
-    }) as typeof fetch;
-    globalThis.fetch = fetchSpy;
-
-    const { getByTestId } = render(
-      <SessionProvider>
-        <SessionRefreshProbe />
-      </SessionProvider>,
-    );
-
-    await waitFor(() => {
-      expect(fetchSpy).toHaveBeenCalledWith(
-        '/api/workspace/identity?agentId=reviewer',
-        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    function SpawnSubagent() {
+      const { spawnSession } = useSessionContext();
+      return (
+        <button
+          data-testid="spawn-subagent"
+          onClick={() => spawnSession({
+            kind: 'subagent',
+            task: 'Investigate issue',
+            parentSessionKey: 'agent:main:main',
+          })}
+        />
       );
-    });
+    }
 
-    const identityCallsBeforeRefresh = fetchSpy.mock.calls.filter(([input]) => {
-      const url = typeof input === 'string'
-        ? input
-        : input instanceof URL
-          ? input.toString()
-          : input.url;
-      return url.includes('/api/workspace/identity?agentId=reviewer');
-    }).length;
-    expect(identityCallsBeforeRefresh).toBe(1);
-
-    await act(async () => {
-      getByTestId('refresh-sessions').click();
-    });
+    render(
+      <SessionProvider>
+        <SessionLabels />
+        <SpawnSubagent />
+      </SessionProvider>,
+    );
 
     await waitFor(() => {
-      expect(rpcMock).toHaveBeenCalledWith('sessions.list', { limit: 1000 });
+      expect(screen.getByText('Main')).toBeInTheDocument();
     });
 
-    const identityCallsAfterRefresh = fetchSpy.mock.calls.filter(([input]) => {
+    screen.getByTestId('spawn-subagent').click();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('current-session').textContent).toBe('agent:main:subagent:new-child');
+      expect(screen.getByText('New child')).toBeInTheDocument();
+    });
+
+    expect(rpcMock).toHaveBeenCalledWith('sessions.list', { limit: 1000 });
+    expect(rpcMock).toHaveBeenCalledWith('sessions.list', { spawnedBy: 'agent:main:main', limit: 500 });
+  });
+
+  it('includes spawned children from non-main roots when refreshing the sessions sidebar', async () => {
+    let subagentSpawnRequested = false;
+    rpcMock.mockImplementation(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'sessions.list') {
+        if (params?.spawnedBy === 'agent:reviewer:main') {
+          return {
+            sessions: subagentSpawnRequested
+              ? [
+                  { sessionKey: 'agent:reviewer:main', label: 'Reviewer' },
+                  { sessionKey: 'agent:reviewer:subagent:new-child', label: 'Reviewer child', state: 'running' },
+                ]
+              : [
+                  { sessionKey: 'agent:reviewer:main', label: 'Reviewer' },
+                ],
+          };
+        }
+
+        if (params?.spawnedBy === 'agent:main:main') {
+          return {
+            sessions: [
+              { sessionKey: 'agent:main:main', label: 'Main' },
+            ],
+          };
+        }
+
+        if (params?.activeMinutes === 24 * 60) {
+          return {
+            sessions: subagentSpawnRequested
+              ? [
+                  { sessionKey: 'agent:reviewer:main', label: 'Reviewer' },
+                  { sessionKey: 'agent:reviewer:subagent:new-child', label: 'Reviewer child', state: 'running' },
+                ]
+              : [
+                  { sessionKey: 'agent:reviewer:main', label: 'Reviewer' },
+                ],
+          };
+        }
+
+        return {
+          sessions: [
+            { sessionKey: 'agent:main:main', label: 'Main' },
+            { sessionKey: 'agent:reviewer:main', label: 'Reviewer' },
+          ],
+        };
+      }
+
+      return {};
+    });
+
+    globalThis.fetch = vi.fn((input: string | URL | Request) => {
       const url = typeof input === 'string'
         ? input
         : input instanceof URL
           ? input.toString()
           : input.url;
-      return url.includes('/api/workspace/identity?agentId=reviewer');
-    }).length;
-    expect(identityCallsAfterRefresh).toBe(1);
+
+      if (url.includes('/api/sessions/spawn-subagent')) {
+        subagentSpawnRequested = true;
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ ok: true, sessionKey: 'agent:reviewer:subagent:new-child' }),
+        } as Response);
+      }
+      if (url.includes('/api/server-info')) return Promise.resolve(jsonResponse({ agentName: 'Jen' }));
+      if (url.includes('/api/agentlog')) return Promise.resolve(jsonResponse([]));
+      if (url.includes('/api/sessions/hidden')) return Promise.resolve(jsonResponse({ ok: true, sessions: [] }));
+      return Promise.resolve(jsonResponse({}));
+    }) as typeof fetch;
+
+    function SpawnReviewerSubagent() {
+      const { spawnSession } = useSessionContext();
+      return (
+        <button
+          data-testid="spawn-reviewer-subagent"
+          onClick={() => spawnSession({
+            kind: 'subagent',
+            task: 'Investigate reviewer issue',
+            parentSessionKey: 'agent:reviewer:main',
+          })}
+        />
+      );
+    }
+
+    render(
+      <SessionProvider>
+        <SessionLabels />
+        <SpawnReviewerSubagent />
+      </SessionProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Reviewer')).toBeInTheDocument();
+    });
+
+    screen.getByTestId('spawn-reviewer-subagent').click();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('current-session').textContent).toBe('agent:reviewer:subagent:new-child');
+      expect(screen.getByText('Reviewer child')).toBeInTheDocument();
+    });
+
+    expect(rpcMock).toHaveBeenCalledWith('sessions.list', { spawnedBy: 'agent:reviewer:main', limit: 500 });
   });
 
   it('marks background top-level roots unread on start and pings when chat reaches a terminal event', async () => {

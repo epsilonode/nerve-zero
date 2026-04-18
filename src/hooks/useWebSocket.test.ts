@@ -55,6 +55,20 @@ function getConnectRequest(ws: MockWebSocket): Record<string, unknown> | null {
   return JSON.parse(connectReq) as Record<string, unknown>;
 }
 
+function simulateAuthHandshake(ws: MockWebSocket) {
+  ws.onmessage?.(new MessageEvent('message', {
+    data: JSON.stringify({ type: 'event', event: 'connect.challenge', payload: { nonce: 'test-nonce' } })
+  }));
+
+  const connectReq = ws.sentMessages.find(m => m.includes('"method":"connect"'));
+  if (connectReq) {
+    const parsed = JSON.parse(connectReq);
+    ws.onmessage?.(new MessageEvent('message', {
+      data: JSON.stringify({ type: 'res', id: parsed.id, ok: true })
+    }));
+  }
+}
+
 describe('useWebSocket', () => {
   let originalWebSocket: typeof WebSocket;
 
@@ -95,7 +109,7 @@ describe('useWebSocket', () => {
       });
 
       await act(async () => {
-        await vi.runAllTimersAsync();
+        await vi.advanceTimersByTimeAsync(0);
       });
 
       act(() => {
@@ -103,7 +117,7 @@ describe('useWebSocket', () => {
       });
 
       await act(async () => {
-        await vi.runAllTimersAsync();
+        await vi.advanceTimersByTimeAsync(0);
       });
 
       expect(result.current.connectionState).toBe('disconnected');
@@ -111,7 +125,7 @@ describe('useWebSocket', () => {
   });
 
   describe('Connect handshake payload', () => {
-    it('should identify as the OpenClaw control UI client', async () => {
+    it('should identify as the ZeroClaw control UI client', async () => {
       const wsInstances: MockWebSocket[] = [];
       const OriginalMockWS = MockWebSocket;
       (globalThis as unknown as { WebSocket: typeof MockWebSocket }).WebSocket = class extends OriginalMockWS {
@@ -128,7 +142,7 @@ describe('useWebSocket', () => {
       });
 
       await act(async () => {
-        await vi.runAllTimersAsync();
+        await vi.advanceTimersByTimeAsync(0);
       });
 
       const ws = wsInstances[0];
@@ -139,7 +153,7 @@ describe('useWebSocket', () => {
       const connectReq = getConnectRequest(ws);
       const client = (connectReq?.params as { client?: { id?: string; mode?: string } } | undefined)?.client;
 
-      expect(client?.id).toBe('openclaw-control-ui');
+      expect(client?.id).toBe('ZeroClaw-control-ui');
       expect(client?.mode).toBe('webchat');
     });
 
@@ -160,7 +174,7 @@ describe('useWebSocket', () => {
       });
 
       await act(async () => {
-        await vi.runAllTimersAsync();
+        await vi.advanceTimersByTimeAsync(0);
       });
 
       const ws = wsInstances[0];
@@ -193,7 +207,7 @@ describe('useWebSocket', () => {
       });
 
       await act(async () => {
-        await vi.runAllTimersAsync();
+        await vi.advanceTimersByTimeAsync(0);
       });
 
       const firstWs = wsInstances[0];
@@ -221,7 +235,7 @@ describe('useWebSocket', () => {
       });
 
       await act(async () => {
-        await vi.runAllTimersAsync();
+        await vi.advanceTimersByTimeAsync(2000);
       });
 
       expect(wsInstances.length).toBeGreaterThanOrEqual(2);
@@ -240,22 +254,6 @@ describe('useWebSocket', () => {
   });
 
   describe('Reconnection Logic', () => {
-    /** Simulate the gateway auth handshake so hasConnectedRef becomes true. */
-    function simulateAuthHandshake(ws: MockWebSocket) {
-      // Gateway sends connect.challenge
-      ws.onmessage?.(new MessageEvent('message', {
-        data: JSON.stringify({ type: 'event', event: 'connect.challenge', data: {} })
-      }));
-      // Find the connect request the hook sent and reply with ok
-      const connectReq = ws.sentMessages.find(m => m.includes('"method":"connect"'));
-      if (connectReq) {
-        const parsed = JSON.parse(connectReq);
-        ws.onmessage?.(new MessageEvent('message', {
-          data: JSON.stringify({ type: 'res', id: parsed.id, ok: true })
-        }));
-      }
-    }
-
     it('should attempt to reconnect after unexpected disconnect', async () => {
       const wsInstances: MockWebSocket[] = [];
       const OriginalMockWS = MockWebSocket;
@@ -274,7 +272,7 @@ describe('useWebSocket', () => {
       });
 
       await act(async () => {
-        await vi.runAllTimersAsync();
+        await vi.advanceTimersByTimeAsync(0);
       });
 
       expect(wsInstances.length).toBeGreaterThanOrEqual(1);
@@ -291,7 +289,7 @@ describe('useWebSocket', () => {
       });
 
       await act(async () => {
-        await vi.runAllTimersAsync();
+        await vi.advanceTimersByTimeAsync(3000);
       });
 
       expect(result.current.connectionState).toBe('reconnecting');
@@ -315,7 +313,11 @@ describe('useWebSocket', () => {
       });
 
       await act(async () => {
-        await vi.runAllTimersAsync();
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      act(() => {
+        simulateAuthHandshake(wsInstances[0]);
       });
 
       const initialCount = wsInstances.length;
@@ -326,7 +328,7 @@ describe('useWebSocket', () => {
       });
 
       await act(async () => {
-        await vi.runAllTimersAsync();
+        await vi.advanceTimersByTimeAsync(0);
       });
 
       // Wait for potential reconnect attempt
@@ -374,7 +376,7 @@ describe('useWebSocket', () => {
       });
 
       await act(async () => {
-        await vi.runAllTimersAsync();
+        await vi.advanceTimersByTimeAsync(2000);
       });
 
       const firstWs = wsInstances[0];
@@ -387,7 +389,7 @@ describe('useWebSocket', () => {
       });
 
       await act(async () => {
-        await vi.runAllTimersAsync();
+        await vi.advanceTimersByTimeAsync(2000);
       });
 
       expect(wsInstances.length).toBeGreaterThanOrEqual(2);
@@ -410,12 +412,12 @@ describe('useWebSocket', () => {
       });
 
       await act(async () => {
-        await vi.runAllTimersAsync();
+        await vi.advanceTimersByTimeAsync(0);
       });
 
       expect(result.current.connectionState).toBe('reconnecting');
       expect(result.current.reconnectAttempt).toBeGreaterThan(0);
-      expect(wsInstances.length).toBeGreaterThanOrEqual(3);
+      expect(result.current.reconnectAttempt).toBeGreaterThanOrEqual(2);
     });
   });
 
@@ -438,7 +440,11 @@ describe('useWebSocket', () => {
       });
 
       await act(async () => {
-        await vi.runAllTimersAsync();
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      act(() => {
+        simulateAuthHandshake(wsInstances[0]);
       });
 
       let rpcError: Error | null = null;
@@ -490,7 +496,7 @@ describe('useWebSocket', () => {
       });
 
       await act(async () => {
-        await vi.runAllTimersAsync();
+        await vi.advanceTimersByTimeAsync(0);
       });
 
       act(() => {
@@ -498,7 +504,7 @@ describe('useWebSocket', () => {
       });
 
       await act(async () => {
-        await vi.runAllTimersAsync();
+        await vi.advanceTimersByTimeAsync(0);
       });
 
       const ws = wsInstances[0];
@@ -547,6 +553,23 @@ describe('useWebSocket', () => {
       });
 
       expect(result.current.connectError).toBe('');
+    });
+
+    it('falls back out of connecting state when the gateway handshake never completes', async () => {
+      const { result } = renderHook(() => useWebSocket());
+
+      act(() => {
+        result.current.connect('ws://localhost:8080', 'test-token').catch(() => {});
+      });
+
+      expect(result.current.connectionState).toBe('connecting');
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+
+      expect(result.current.connectionState).toBe('disconnected');
+      expect(result.current.connectError).toBe('Gateway handshake timed out');
     });
   });
 });

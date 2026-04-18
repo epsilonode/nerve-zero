@@ -3,9 +3,9 @@
  * Guides users through first-time configuration.
  *
  * Usage:
- *   npm run setup               # Interactive setup
- *   npm run setup -- --check    # Validate existing config
- *   npm run setup -- --defaults # Non-interactive with defaults
+ *   bun run setup               # Interactive setup
+ *   bun run setup -- --check    # Validate existing config
+ *   bun run setup -- --defaults # Non-interactive with defaults
  */
 
 /** Mask a token for display, with a guard for short tokens. */
@@ -45,7 +45,7 @@ import { printDeploymentGuides, shouldPrintDeploymentGuides } from './lib/deploy
 const PROJECT_ROOT = resolve(process.cwd());
 const ENV_PATH = resolve(PROJECT_ROOT, '.env');
 const SKILLS_SRC = resolve(PROJECT_ROOT, 'skills');
-const SKILLS_DEST = resolve(homedir(), '.openclaw', 'workspace', 'skills');
+const SKILLS_DEST = resolve(homedir(), '.ZeroClaw', 'workspace', 'skills');
 const TOTAL_SECTIONS = 6;
 
 const args = process.argv.slice(2);
@@ -208,7 +208,7 @@ function installBundledSkills(): void {
 async function main(): Promise<void> {
   if (isHelp) {
     console.log(`
-  Usage: npm run setup [options]
+  Usage: bun run setup [options]
 
   Options:
     --check                   Validate existing .env config and test gateway connection
@@ -224,7 +224,7 @@ async function main(): Promise<void> {
     tailscale-serve   Loopback + Tailscale Serve hostname
 
   The setup wizard guides you through 6 steps:
-    1. Gateway Connection — connect to your OpenClaw gateway
+    1. Gateway Connection — connect to your ZeroClaw gateway
     2. Agent Identity     — set your agent's display name
     3. Access Mode        — local, Tailscale IP, Tailscale Serve, LAN, or custom
     4. Authentication     — password protection (network mode)
@@ -232,10 +232,10 @@ async function main(): Promise<void> {
     6. Advanced Settings  — custom file paths (most users skip this)
 
   Examples:
-    npm run setup                                     # Interactive setup
-    npm run setup -- --check                          # Validate existing config
-    npm run setup -- --defaults                       # Auto-configure with detected values
-    npm run setup -- --defaults --access-mode tailscale-serve
+    bun run setup                                     # Interactive setup
+    bun run setup -- --check                          # Validate existing config
+    bun run setup -- --defaults                       # Auto-configure with detected values
+    bun run setup -- --defaults --access-mode tailscale-serve
 `);
     return;
   }
@@ -247,9 +247,9 @@ async function main(): Promise<void> {
 
   // Prerequisite checks (skip verbose output when called from installer — already checked)
   const prereqs = checkPrerequisites({ quiet: !!process.env.NERVE_INSTALLER });
-  if (!prereqs.nodeOk) {
+  if (!prereqs.bunOk) {
     console.log('');
-    fail('Node.js ≥ 22 is required. Please upgrade and try again.');
+    fail('Bun 1.0+ is required. Please upgrade and try again.');
     process.exit(1);
   }
 
@@ -332,7 +332,7 @@ async function collectInteractive(
   // ── 1/5: Gateway Connection ──────────────────────────────────────
 
   section(1, TOTAL_SECTIONS, 'Gateway Connection');
-  dim('Nerve connects to your OpenClaw gateway.');
+  dim('Nerve connects to your ZeroClaw gateway.');
   dim('Make sure the gateway is running before continuing.');
   console.log('');
 
@@ -352,7 +352,7 @@ async function collectInteractive(
     success('Auto-detected gateway token from local gateway config');
   }
   if (tokenChoice.source === 'env') {
-    success('Found OPENCLAW_GATEWAY_TOKEN in environment');
+    success('Found ZeroClaw_GATEWAY_TOKEN in environment');
   }
 
   config.GATEWAY_URL = await input({
@@ -405,7 +405,7 @@ async function collectInteractive(
       });
     }
   } else {
-    dim('Find your token in ~/.openclaw/openclaw.json or run: openclaw gateway status');
+    dim('Find your token in ~/.ZeroClaw/ZeroClaw.json or run: ZeroClaw gateway status');
     config.GATEWAY_TOKEN = await password({
     theme: promptTheme,
       message: 'Gateway Auth Token (required)',
@@ -425,7 +425,7 @@ async function collectInteractive(
     console.log(`\x1b[32m✓\x1b[0m ${gwTest.message}`);
   } else {
     console.log(`\x1b[31m✗\x1b[0m ${gwTest.message}`);
-    dim('  Start it with: openclaw gateway start');
+    dim('  Start it with: ZeroClaw gateway start');
     console.log('\n  Setup could not verify your gateway token. Fix the gateway or token, then re-run setup.\n');
     process.exit(1);
   }
@@ -543,7 +543,7 @@ async function collectInteractive(
       warn('Tailscale is not installed on this machine.');
       dim('Install it first, then complete browser login with: tailscale up');
       dim('Download: https://tailscale.com/download/linux');
-      console.log('\n  Re-run: \x1b[36mnpm run setup\x1b[0m\n');
+      console.log('\n  Re-run: \x1b[36mbun run setup\x1b[0m\n');
       process.exit(1);
     }
 
@@ -567,7 +567,7 @@ async function collectInteractive(
 
     if (nextAction === 'exit') {
       console.log('\n  Finish login with: \x1b[36mtailscale up\x1b[0m');
-      console.log('  Then re-run: \x1b[36mnpm run setup\x1b[0m\n');
+      console.log('  Then re-run: \x1b[36mbun run setup\x1b[0m\n');
       process.exit(1);
     }
 
@@ -610,13 +610,13 @@ async function collectInteractive(
     console.log('');
     const configureServe = await confirm({
       theme: promptTheme,
-      message: `Configure Tailscale Serve now? (tailscale serve --bg http://127.0.0.1:${port})`,
+      message: `Configure Tailscale Serve now? (tailscale serve --bg 443 http://127.0.0.1:${port})`,
       default: true,
     });
 
     if (configureServe) {
       try {
-        execSync(`tailscale serve --bg http://127.0.0.1:${port}`, { stdio: 'pipe', timeout: 15000, encoding: 'utf8' });
+        execSync(`tailscale serve --bg 443 http://127.0.0.1:${port}`, { stdio: 'pipe', timeout: 15000, encoding: 'utf8' });
         success(`Tailscale Serve configured for http://127.0.0.1:${port}`);
       } catch (err) {
         const execErr = err as {
@@ -640,7 +640,7 @@ async function collectInteractive(
         warn(`Failed to configure Tailscale Serve automatically: ${detailWithStatus}`);
       }
     } else {
-      dim(`Run later: tailscale serve --bg http://127.0.0.1:${port}`);
+      dim(`Run later: tailscale serve --bg 443 http://127.0.0.1:${port}`);
     }
 
     tailscaleState = getTailscaleState();
@@ -662,7 +662,7 @@ async function collectInteractive(
       });
 
       if (fallback === 'stop') {
-        console.log('\n  Finish Tailscale Serve setup, then re-run: \x1b[36mnpm run setup\x1b[0m\n');
+        console.log('\n  Finish Tailscale Serve setup, then re-run: \x1b[36mbun run setup\x1b[0m\n');
         process.exit(1);
       }
 
@@ -744,8 +744,8 @@ async function collectInteractive(
 
   if (neededChanges.length > 0) {
     console.log('');
-    warn('Nerve needs to update your OpenClaw gateway config.');
-    dim('OpenClaw config files will be updated.');
+    warn('Nerve needs to update your ZeroClaw gateway config.');
+    dim('ZeroClaw config files will be updated.');
     console.log('');
     dim('The following changes are needed:');
     neededChanges.forEach((change, i) => {
@@ -765,13 +765,13 @@ async function collectInteractive(
       warn('Skipped gateway config changes. Some features may not work:');
       for (const change of neededChanges) {
         if (change.id === 'device-scopes') {
-          dim('  • Device scopes: manually fix scopes in ~/.openclaw/devices/paired.json');
+          dim('  • Device scopes: manually fix scopes in ~/.ZeroClaw/devices/paired.json');
         } else if (change.id === 'pre-pair') {
-          dim('  • Pre-pair: run `openclaw devices approve` after starting Nerve');
+          dim('  • Pairing: generate a fresh pair code and complete the gateway handshake after starting Nerve');
         } else if (change.id === 'tools-allow') {
-          dim('  • HTTP tools: add "cron", "gateway", and "sessions_spawn" to gateway.tools.allow in ~/.openclaw/openclaw.json');
+          dim('  • HTTP tools: add "cron", "gateway", and "sessions_spawn" to gateway.tools.allow in ~/.ZeroClaw/ZeroClaw.json');
         } else if (change.id.startsWith('allowed-origins')) {
-          dim('  • Origins: add the required origin(s) to gateway.controlUi.allowedOrigins in ~/.openclaw/openclaw.json');
+          dim('  • Origins: add the required origin(s) to gateway.controlUi.allowedOrigins in ~/.ZeroClaw/ZeroClaw.json');
         }
       }
     }
@@ -838,7 +838,7 @@ async function collectInteractive(
         success('Authentication enabled — your gateway token can be used as a password.');
       } else {
         warn('No password set and no gateway token. Authentication disabled.');
-        dim('Run `npm run setup` again to set a password.');
+        dim('Run `bun run setup` again to set a password.');
       }
     }
   } else {
@@ -1001,8 +1001,9 @@ function printNextSteps(config: EnvConfig): void {
   const port = config.PORT || DEFAULTS.PORT;
   console.log('');
   console.log('  \x1b[1mNext steps:\x1b[0m');
-  console.log(`    Development:   \x1b[36mnpm run dev\x1b[0m && \x1b[36mnpm run dev:server\x1b[0m`);
-  console.log(`    Production:    \x1b[36mnpm run prod\x1b[0m`);
+  console.log(`    Development:   \x1b[36mbun run dev\x1b[0m && \x1b[36mPORT=3081 bun run dev:server\x1b[0m`);
+  console.log(`    Start Nerve:   \x1b[36mbun start\x1b[0m`);
+  console.log(`    Fresh build:   \x1b[36mbun run prod\x1b[0m`);
   console.log('');
   console.log(`  Open \x1b[36mhttp://localhost:${port}\x1b[0m in your browser.`);
   console.log('');
@@ -1092,7 +1093,7 @@ async function runCheck(config: EnvConfig): Promise<void> {
     }
   } else if (host === '0.0.0.0') {
     warn('Authentication is DISABLED while server is network-exposed');
-    dim('Run `npm run setup` to enable authentication');
+    dim('Run `bun run setup` to enable authentication');
   } else {
     info('Authentication disabled (localhost-only — OK)');
   }
@@ -1106,7 +1107,7 @@ async function runCheck(config: EnvConfig): Promise<void> {
 
   console.log('');
   if (errors > 0) {
-    fail(`${errors} issue(s) found. Run \x1b[36mnpm run setup\x1b[0m to fix.`);
+    fail(`${errors} issue(s) found. Run \x1b[36mbun run setup\x1b[0m to fix.`);
     process.exit(1);
   } else {
     success('Configuration looks good!');
@@ -1144,7 +1145,7 @@ async function runDefaults(existing: EnvConfig, prereqs: PrereqResult): Promise<
       success(`Auto-detected gateway token${tokenChoice.source === 'env' ? ' from environment' : ''}`);
     } else {
       fail('GATEWAY_TOKEN is required but could not be auto-detected');
-      console.log('  Set OPENCLAW_GATEWAY_TOKEN in your environment, or run setup interactively.');
+      console.log('  Set ZeroClaw_GATEWAY_TOKEN in your environment, or run setup interactively.');
       console.log('');
       process.exit(1);
     }

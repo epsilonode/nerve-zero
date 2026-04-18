@@ -493,7 +493,7 @@ export function CronDialog({ open, onClose, onSubmit, mode, initialData }: CronD
                   <div className="space-y-2.5">
                     {availableChannels.length === 0 ? (
                       <div className="rounded-[18px] border border-orange/30 bg-orange/6 px-3 py-3 text-[0.733rem] text-orange/85">
-                        No messaging channels are configured yet. Set one up in OpenClaw first, or keep the job inside Nerve.
+                        No messaging channels are configured yet. Set one up in ZeroClaw first, or keep the job inside Nerve.
                       </div>
                     ) : (
                       <div className="grid gap-3 sm:grid-cols-2">

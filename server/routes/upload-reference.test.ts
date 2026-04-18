@@ -17,7 +17,7 @@ const tempDirs = new Set<string>();
 async function makeHomeWorkspace(): Promise<{ homeDir: string; workspaceRoot: string }> {
   const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'nerve-upload-reference-home-'));
   tempDirs.add(homeDir);
-  const workspaceRoot = path.join(homeDir, '.openclaw', 'workspace');
+  const workspaceRoot = path.join(homeDir, '.ZeroClaw', 'workspace');
   await fs.mkdir(workspaceRoot, { recursive: true });
   process.env.HOME = homeDir;
   delete process.env.FILE_BROWSER_ROOT;
@@ -124,39 +124,6 @@ describe('POST /api/upload-reference/resolve', () => {
     expect(json.items[0].canonicalPath).toMatch(/^\.temp\/nerve-uploads\/\d{4}\/\d{2}\/\d{2}\/proof-[a-f0-9]{8}\.txt$/);
     expect(json.items[0].absolutePath).toBe(path.join(workspaceRoot, json.items[0].canonicalPath));
     await expect(fs.readFile(json.items[0].absolutePath, 'utf8')).resolves.toBe('hello upload');
-  });
-
-  it('resolves direct workspace references against the requested agent workspace', async () => {
-    const { homeDir } = await makeHomeWorkspace();
-    const agentWorkspaceRoot = path.join(homeDir, '.openclaw', 'workspace-research');
-    const targetPath = path.join(agentWorkspaceRoot, 'docs', 'note.md');
-    await fs.mkdir(path.dirname(targetPath), { recursive: true });
-    await fs.writeFile(targetPath, '# hi\n', 'utf8');
-
-    const { default: app } = await importRoute();
-    const res = await app.request('/api/upload-reference/resolve', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: 'docs/note.md', agentId: 'research' }),
-    });
-
-    expect(res.status).toBe(200);
-    const json = await res.json() as {
-      ok: boolean;
-      items: Array<{
-        canonicalPath: string;
-        absolutePath: string;
-        originalName: string;
-      }>;
-    };
-
-    expect(json.ok).toBe(true);
-    expect(json.items).toHaveLength(1);
-    expect(json.items[0]).toEqual(expect.objectContaining({
-      canonicalPath: 'docs/note.md',
-      absolutePath: targetPath,
-      originalName: 'note.md',
-    }));
   });
 
   it('rejects symlink escapes that resolve outside the workspace root', async () => {

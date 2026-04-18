@@ -1,6 +1,6 @@
 # Architecture
 
-> **Nerve** is a web interface for OpenClaw — chat, voice input, TTS, and agent monitoring in the browser. It connects to the OpenClaw gateway over WebSocket and provides a rich UI for interacting with AI agents.
+> **Nerve** is a web interface for ZeroClaw — chat, voice input, TTS, and agent monitoring in the browser. It connects to the ZeroClaw gateway over WebSocket and provides a rich UI for interacting with AI agents.
 
 ## System Diagram
 
@@ -23,8 +23,8 @@
 │                               │                                  │
 │  ┌────────────────────────────┴─────────────┐                    │
 │  │         WebSocket Proxy (ws-proxy.ts)     │                   │
-│  │  - Intercepts connect.challenge           │                   │
-│  │  - Injects device identity (Ed25519)      │                   │
+│  │  - Verifies browser session on upgrade    │                   │
+│  │  - Forwards bearer auth to /ws/chat       │                   │
 │  └────────────────────────────┬──────────────┘                   │
 │                               │                                  │
 │  ┌───────────────┐  ┌────────┴─────┐  ┌───────────────────────┐ │
@@ -39,9 +39,9 @@
 └──────────────────────────────┬───────────────────────────────────┘
                                │ HTTP / WS
                     ┌──────────┴──────────┐
-                    │  OpenClaw Gateway    │
-                    │  (ws://127.0.0.1:    │
-                    │       18789)         │
+                    │  ZeroClaw Gateway    │
+                    │  (/ws/chat on the    │
+                    │   active local port) │
                     └─────────────────────┘
 ```
 
@@ -64,7 +64,7 @@ All global state flows through four React contexts, nested in dependency order:
 |---------|------|-----------------|
 | **GatewayContext** | `src/contexts/GatewayContext.tsx` | WebSocket connection lifecycle, RPC method calls, event fan-out via pub/sub pattern, model/thinking status polling, activity sparkline |
 | **SettingsContext** | `src/contexts/SettingsContext.tsx` | Sound, TTS provider/model, wake word, panel ratio, theme, font, font size, telemetry/events visibility. Persists to `localStorage` |
-| **SessionContext** | `src/contexts/SessionContext.tsx` | Session list (via gateway RPC), granular agent status tracking (IDLE/THINKING/STREAMING/DONE/ERROR), busy state derivation, unread session tracking, agent log, event log, session CRUD (delete, spawn, rename, abort) |
+| **SessionContext** | `src/contexts/SessionContext.tsx` | Session list, granular agent status tracking (IDLE/THINKING/STREAMING/DONE/ERROR), busy state derivation, unread session tracking, agent log, event log, session CRUD (delete, spawn, rename, abort) |
 | **ChatContext** | `src/contexts/ChatContext.tsx` | Thin orchestrator composing 4 hooks: `useChatMessages` (CRUD, history, scroll), `useChatStreaming` (deltas, processing stage, activity log), `useChatRecovery` (reconnect, retry, gap detection), `useChatTTS` (playback, voice fallback, sound feedback) |
 
 **Data flow pattern:** Contexts subscribe to gateway events via `GatewayContext.subscribe()`. The `SessionContext` listens for `agent` and `chat` events to update granular status. The `ChatContext` listens for streaming deltas and lifecycle events to render real-time responses.
@@ -298,7 +298,7 @@ Cmd+K command palette.
 
 ## Backend Structure
 
-Built with **Hono** (lightweight web framework), **TypeScript**, running on **Node.js ≥22**.
+Built with **Hono** (lightweight web framework), **TypeScript**, running on **Bun ≥22**.
 
 ### Entry Point
 
@@ -346,14 +346,14 @@ Applied in order in `app.ts`:
 | `/api/tokens` | `routes/tokens.ts` | GET | Token usage statistics — scans session transcripts, persists high water mark |
 | `/api/memories` | `routes/memories.ts` | GET, POST, DELETE | Agent-scoped memory management — reads `MEMORY.md` + daily files, stores/deletes via gateway tool invocation |
 | `/api/memories/section` | `routes/memories.ts` | GET, PUT | Read/replace a specific memory section by title, scoped via `agentId` |
-| `/api/gateway/models` | `routes/gateway.ts` | GET | Config-backed model catalog from the active OpenClaw config. Returns `{ models, error, source: "config" }` |
+| `/api/gateway/models` | `routes/gateway.ts` | GET | Config-backed model catalog from the active ZeroClaw config. Returns `{ models, error, source: "config" }` |
 | `/api/gateway/session-info` | `routes/gateway.ts` | GET | Current session model/thinking level |
 | `/api/gateway/session-patch` | `routes/gateway.ts` | POST | HTTP fallback for model changes. Thinking changes belong on WS `sessions.patch` |
 | `/api/server-info` | `routes/server-info.ts` | GET | Server time, gateway uptime, agent name |
 | `/api/version` | `routes/version.ts` | GET | Package version from `package.json` |
 | `/api/version/check` | `routes/version-check.ts` | GET | Check whether a newer published version is available |
-| `/api/channels` | `routes/channels.ts` | GET | List configured messaging channels from OpenClaw config |
-| `/api/gateway/restart` | `routes/gateway.ts` | POST | Restart the OpenClaw gateway service and verify readiness |
+| `/api/channels` | `routes/channels.ts` | GET | List configured messaging channels from ZeroClaw config |
+| `/api/gateway/restart` | `routes/gateway.ts` | POST | Restart the ZeroClaw gateway service and verify readiness |
 | `/api/sessions/hidden` | `routes/sessions.ts` | GET | List hidden cron-like sessions from stored session metadata |
 | `/api/sessions/:id/model` | `routes/sessions.ts` | GET | Read the actual model used by a session from its transcript |
 | `/api/workspace` | `routes/workspace.ts` | GET | List allowlisted workspace files for the selected agent workspace |
@@ -362,7 +362,7 @@ Applied in order in `app.ts`:
 | `/api/crons/:id/toggle` | `routes/crons.ts` | POST | Toggle cron enabled/disabled |
 | `/api/crons/:id/run` | `routes/crons.ts` | POST | Run cron job immediately |
 | `/api/crons/:id/runs` | `routes/crons.ts` | GET | Cron run history |
-| `/api/skills` | `routes/skills.ts` | GET | List skills for the selected agent workspace via a scoped OpenClaw config |
+| `/api/skills` | `routes/skills.ts` | GET | List skills for the selected agent workspace via a scoped ZeroClaw config |
 | `/api/keys` | `routes/api-keys.ts` | GET, PUT | Read API-key presence and persist updated key values to `.env` |
 | `/api/files` | `routes/files.ts` | GET | Serve local image files (MIME-type restricted, directory traversal blocked) |
 | `/api/files/tree` | `routes/file-browser.ts` | GET | Agent-scoped workspace directory tree (excludes node_modules, .git, etc.) |
@@ -394,8 +394,7 @@ Applied in order in `app.ts`:
 |------|---------|
 | `lib/config.ts` | Centralized configuration from env vars — ports, keys, paths, limits, auth settings. Validated at startup |
 | `lib/session.ts` | Session token creation/verification (HMAC-SHA256), password hashing (scrypt), cookie parsing for WS upgrade requests |
-| `lib/ws-proxy.ts` | WebSocket proxy — client→gateway with session cookie auth on upgrade and Ed25519 device identity injection |
-| `lib/device-identity.ts` | Ed25519 keypair generation/persistence (`~/.nerve/device-identity.json`). Builds signed connect blocks for gateway auth |
+| `lib/ws-proxy.ts` | WebSocket proxy — client→gateway with session-cookie auth on upgrade and bearer/session forwarding to ZeroClaw `/ws/chat` |
 | `lib/gateway-client.ts` | HTTP client for gateway tool invocation API (`/tools/invoke`) |
 | `lib/file-watcher.ts` | Discovers agent workspaces, watches each `MEMORY.md` and `memory/` directory, and optionally watches full workspaces recursively. Broadcasts agent-tagged `memory.changed` / `file.changed` SSE events |
 | `lib/file-utils.ts` | File browser utilities — path validation, directory exclusions, binary file detection |
@@ -407,7 +406,7 @@ Applied in order in `app.ts`:
 | `lib/cached-fetch.ts` | Generic TTL cache with in-flight request deduplication |
 | `lib/usage-tracker.ts` | Persistent token usage high water mark tracking |
 | `lib/tts-config.ts` | TTS voice configuration file management |
-| `lib/openclaw-bin.ts` | Resolves `openclaw` binary path (env → sibling of node → common paths → PATH) |
+| `lib/ZeroClaw-bin.ts` | Resolves `ZeroClaw` binary path (env → sibling of node → common paths → PATH) |
 
 ### Services
 
@@ -423,15 +422,15 @@ Applied in order in `app.ts`:
 
 ### Updater (`server/lib/updater/`)
 
-Self-update system invoked via `npm run update` (entrypoint: `bin/nerve-update.ts` → `bin-dist/bin/nerve-update.js`).
+Self-update system invoked via `bun run update` (entrypoint: `bin/nerve-update.ts` → `bin-dist/bin/nerve-update.js`).
 
 | File | Purpose |
 |------|---------|
 | `orchestrator.ts` | State machine: lock → preflight → resolve → snapshot → update → build → restart → health → rollback |
-| `preflight.ts` | Validates git, Node.js, npm versions and git repo state |
+| `preflight.ts` | Validates git, Bun, and git repo state |
 | `release-resolver.ts` | Finds latest semver tag via `git ls-remote --tags`, falls back to local tags |
 | `snapshot.ts` | Saves current git ref, version, and `.env` backup to `~/.nerve/updater/` |
-| `installer.ts` | `git fetch + checkout --force`, `npm install`, `npm run build + build:server` |
+| `installer.ts` | `git fetch + checkout --force`, `bun install`, `bun run build + build:server` |
 | `service-manager.ts` | Auto-detects systemd or launchd, provides restart/status/logs |
 | `health.ts` | Polls `/health` and `/api/version` with exponential backoff (60s deadline) |
 | `rollback.ts` | Restores snapshot ref, clean rebuilds, restarts service |
@@ -448,17 +447,16 @@ Compiled separately via `config/tsconfig.bin.json` to avoid changing the server'
 ### WebSocket Proxy
 
 ```
-Browser WS → /ws?target=ws://gateway:18789/ws → ws-proxy.ts → OpenClaw Gateway
+Browser WS → /ws?target=ws://gateway:PORT/ws/chat → ws-proxy.ts → ZeroClaw Gateway
 ```
 
 1. Client connects to `/ws` endpoint on Nerve server
 2. When auth is enabled, the session cookie is verified on the HTTP upgrade request (rejects with 401 if invalid)
 3. Proxy validates target URL against `WS_ALLOWED_HOSTS` allowlist
-4. Proxy opens upstream WebSocket to the gateway
-5. On `connect.challenge` event, proxy intercepts the client's `connect` request and injects Ed25519 device identity (`device` block with signed nonce)
-6. If the gateway rejects the device (close code 1008), proxy retries without device identity (reduced scopes)
-7. After handshake, all messages are transparently forwarded bidirectionally
-8. Pending messages are buffered (capped at 100 messages / 1 MB) while upstream connects
+4. Proxy opens upstream WebSocket to the gateway's `/ws/chat` endpoint
+5. Proxy forwards bearer auth via `Authorization`, `bearer.<token>` subprotocol, and `?token=` when available
+6. Gateway emits `session_start` when the chat session is live
+7. After session start, all messages are transparently forwarded bidirectionally
 
 ### Server-Sent Events (SSE)
 
@@ -481,9 +479,9 @@ REST endpoints serve two purposes:
 1. **Proxy to gateway** — Routes like `/api/crons`, `/api/memories` (POST/DELETE), `/api/gateway/*` invoke gateway tools via `invokeGatewayTool()`
 2. **Local server data** — Routes like `/api/tokens`, `/api/agentlog`, `/api/server-info` read from local files or process info
 
-### Gateway RPC (via WebSocket)
+### Gateway Compatibility Shim
 
-The frontend calls gateway methods via `GatewayContext.rpc()`:
+The frontend still calls `GatewayContext.rpc()`, but the implementation now shims those calls onto current ZeroClaw primitives:
 
 | Method | Purpose |
 |--------|---------|
@@ -495,13 +493,13 @@ The frontend calls gateway methods via `GatewayContext.rpc()`:
 | `chat.send` | Send a message (with idempotency key) |
 | `chat.history` | Load message history |
 | `chat.abort` | Abort current generation |
-| `connect` | Initial handshake with auth/device identity |
+| `chat.send` | Sends `{ type: "message", content }` over `/ws/chat` |
 
 ### Event Types (Gateway → Client)
 
 | Event | Payload | Purpose |
 |-------|---------|---------|
-| `connect.challenge` | `{ nonce }` | Auth handshake initiation |
+| `session_start` | `{ session_id, resumed, message_count }` | Chat session established |
 | `chat` | `{ sessionKey, state, message?, content? }` | Chat state changes: `started`, `delta`, `final`, `error`, `aborted` |
 | `agent` | `{ sessionKey, state, stream, data? }` | Agent lifecycle: `lifecycle.start/end/error`, `tool.start/result`, `assistant` stream |
 | `cron` | `{ name }` | Cron job triggered |
@@ -573,12 +571,9 @@ This prevents stale overwrites from concurrent editors (drag-and-drop, API clien
    +-- if task already in-progress: return 409 duplicate_execution
    +-- if task has an assignee root:
    |    +-- resolve assignee root -> agent:<assignee>:main
-   |    +-- gatewayRpcCall('sessions.list', ...) confirms the parent root exists
    |    +-- store.executeTask(..., { sessionKey }) -> status = in-progress, run.status = running
-   |    +-- launchKanbanFallbackSubagentViaRpc({ label, task, parentSessionKey, model?, thinking? })
-   |         +-- gatewayRpcCall('sessions.create', { key: childSessionKey, parentSessionKey, label, model? })
-   |         +-- gatewayRpcCall('sessions.send', { key: childSessionKey, message: task, thinking?, idempotencyKey })
-   |         +-- if send fails after create: best-effort gatewayRpcCall('sessions.delete', { key: childSessionKey, deleteTranscript: true })
+   |    +-- launchKanbanAssignedSubagent({ label, task, parentSessionKey, model?, thinking? })
+   |         +-- spawnZeroClawSession(...) → invokeGatewayTool('sessions_spawn', ...)
    |         +-- return correlationKey + childSessionKey + runId?
    |         +-- attach childSessionKey / runId immediately when available
    |         +-- start pollFallbackSessionCompletion(taskId, { correlationKey, parentSessionKey, childSessionKey?, expectedChildLabel, knownSessionKeysBefore, runId? })
@@ -594,17 +589,15 @@ This prevents stale overwrites from concurrent editors (drag-and-drop, API clien
 
 2. pollSessionCompletion() / pollFallbackSessionCompletion()
    +-- sessions_spawn path polls gateway subagents by correlation key / childSessionKey / runId
-   +-- assignee-root path polls gateway RPC sessions.list every 5s (max 720 attempts / 60 min)
+   +-- assignee-root path polls the local ZeroClaw session store every 5s (max 720 attempts / 60 min)
    +-- assignee-root path prefers the known childSessionKey; otherwise it discovers the new child beneath the parent root and attaches it
    +-- if the child completes successfully:
-       |   fetch child history via sessions.get / sessions_history
+       |   fetch child history from the local ZeroClaw session store
        |   parseKanbanMarkers(resultText) -> create proposals
        |   stripKanbanMarkers(resultText) -> clean result
        |   store.completeRun(taskId, sessionKey, cleanResult)
-       +-- gatewayRpcCall('sessions.send', { key: parentSessionKey, message: completionReport })
-   +-- if status=error/failed:
+    +-- if status=error/failed:
        |   store.completeRun(taskId, sessionKey, undefined, errorMsg)
-       +-- gatewayRpcCall('sessions.send', { key: parentSessionKey, message: failureReport })
    +-- if task/run no longer matches the active session key:
        +-- stop polling as stale
    +-- otherwise:
@@ -615,7 +608,7 @@ This prevents stale overwrites from concurrent editors (drag-and-drop, API clien
    +-- error   -> run.status = error, task.status = todo
 ```
 
-Assigned-root execution now uses real session primitives instead of synthetic marker-message spawn conventions. The model cascade is: execute request `model` -> task `model` -> board config `defaultModel` -> OpenClaw's configured default model. Thinking follows the same pattern with `defaultThinking`.
+Assigned-root execution now uses real session primitives instead of synthetic marker-message spawn conventions. The model cascade is: execute request `model` -> task `model` -> board config `defaultModel` -> ZeroClaw's configured default model. Thinking follows the same pattern with `defaultThinking`.
 
 ### Marker Parsing
 
@@ -658,8 +651,8 @@ Backend polling for each running task is independent -- each `executeTask` call 
 ### Development
 
 ```bash
-npm run dev          # Vite dev server (frontend) — port 3080
-npm run dev:server   # tsx watch (backend) — port 3081
+bun run dev          # Vite dev server (frontend) — port 3080
+bun run dev:server   # tsx watch (backend) — port 3081
 ```
 
 Vite proxies `/api` and `/ws` to the backend dev server.
@@ -667,11 +660,11 @@ Vite proxies `/api` and `/ws` to the backend dev server.
 ### Production
 
 ```bash
-npm run prod         # Builds frontend + backend, then starts
+bun start            # Boot path; builds frontend first if dist/ is missing
 # Equivalent to:
-npm run build        # tsc -b && vite build → dist/
-npm run build:server # tsc -p config/tsconfig.server.json → server-dist/
-npm start            # node server-dist/index.js
+bun run build        # tsc -b && vite build → dist/
+bun run build:server # tsc -p config/tsconfig.server.json → server-dist/
+bun run start:built  # bun server-dist/index.js
 ```
 
 ### Vite Configuration
@@ -697,8 +690,8 @@ Project references with four configs:
 **Framework:** Vitest with jsdom environment for React tests.
 
 ```bash
-npm test              # Run all tests
-npm run test:coverage # With V8 coverage
+bun test              # Run all tests
+bun run test:coverage # With V8 coverage
 ```
 
 ### Test Files
@@ -707,7 +700,7 @@ npm run test:coverage # With V8 coverage
 
 | Area | Files | Coverage |
 |------|-------|----------|
-| Server lib | `config`, `device-identity`, `env-file`, `gateway-client`, `mutex`, `voice-language-coverage`, `ws-proxy` | Auth, config resolution, WS proxy relay, device identity signing |
+| Server lib | `config`, `env-file`, `gateway-client`, `mutex`, `voice-language-coverage`, `ws-proxy`, `zeroclaw-sessions` | Auth, config resolution, WS proxy relay, and local ZeroClaw session-store access |
 | Server routes | `auth`, `events`, `files`, `gateway`, `health`, `sessions`, `skills` | API endpoints, error handling, gateway proxy |
 | Server middleware | `auth`, `error-handler`, `rate-limit`, `security-headers` | Request pipeline |
 | Chat operations | `sendMessage`, `streamEventHandler`, `loadHistory`, `mergeRecoveredTail` | Message lifecycle, streaming, history recovery |

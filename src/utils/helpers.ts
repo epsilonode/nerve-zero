@@ -166,7 +166,7 @@ export function describeToolUse(toolName: string, input: Record<string, unknown>
       if (cmd.includes('git ')) return withProject('git ' + cmd.replace(/.*git\s+/, '').split(/\s/)[0], project);
       if (cmd.startsWith('cd ') && cmd.includes('node ')) return 'restarting server';
       if (cmd.includes('python3')) return withProject('running python script', project);
-      if (cmd.includes('npm run build')) return withProject('building', project);
+      if (cmd.includes('bun run build')) return withProject('building', project);
       if (cmd.includes('npm run lint')) return withProject('linting', project);
       if (cmd.includes('npm run ')) {
         const script = cmd.match(/npm run\s+(\S+)/)?.[1] || '';

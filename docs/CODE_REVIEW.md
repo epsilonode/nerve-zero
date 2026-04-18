@@ -103,7 +103,7 @@ Examples:
 
 - "This route writes state but skips input validation, while nearby write routes parse JSON explicitly. Can we add a schema or a narrow parser here?"
 - "This panel is now imported eagerly, which pulls file editor code into the initial bundle. Was that intentional?"
-- "The doc says `npm run dev:server` uses `:3081`, but the script only does that when `PORT=3081` is set."
+- "The doc says `bun run dev:server` uses `:3081`, but the script only does that when `PORT=3081` is set."
 
 ## Avoid this
 

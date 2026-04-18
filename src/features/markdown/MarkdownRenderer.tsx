@@ -1,11 +1,10 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef } from 'react';
-import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { hljs } from '@/lib/highlight';
 import { sanitizeHtml } from '@/lib/sanitize';
 import { escapeRegex } from '@/lib/constants';
 import { CodeBlockActions } from './CodeBlockActions';
-import { parseBeadLinkHref, type BeadLinkTarget } from '@/features/beads';
 import { renderInlinePathReferences } from './inlineReferences';
 
 interface MarkdownRendererProps {
@@ -16,9 +15,6 @@ interface MarkdownRendererProps {
   currentDocumentPath?: string;
   onOpenWorkspacePath?: (path: string, basePath?: string) => void | Promise<void>;
   pathLinkPrefixes?: string[];
-  pathLinkAliases?: Record<string, string>;
-  onOpenBeadId?: (target: BeadLinkTarget) => void | Promise<void>;
-  workspaceAgentId?: string;
 }
 
 interface MarkdownAstNode {
@@ -59,38 +55,6 @@ type MarkdownLinkProps = React.AnchorHTMLAttributes<HTMLAnchorElement> & Markdow
   children?: React.ReactNode;
   href?: string;
 };
-
-const MarkdownLinkContext = createContext(false);
-
-function InlineCodeContent({
-  codeString,
-  children,
-  pathLinkPrefixes,
-  pathLinkAliases,
-  currentDocumentPath,
-  onOpenWorkspacePath,
-}: {
-  codeString: string;
-  children?: React.ReactNode;
-  pathLinkPrefixes?: string[];
-  pathLinkAliases?: Record<string, string>;
-  currentDocumentPath?: string;
-  onOpenWorkspacePath?: (path: string, basePath?: string) => void | Promise<void>;
-}) {
-  const isInsideMarkdownLink = useContext(MarkdownLinkContext);
-
-  if (isInsideMarkdownLink) {
-    return <>{children}</>;
-  }
-
-  return renderInlinePathReferences(codeString, {
-    prefixes: pathLinkPrefixes,
-    aliases: pathLinkAliases,
-    onOpenPath: onOpenWorkspacePath
-      ? (path: string) => onOpenWorkspacePath(path, currentDocumentPath)
-      : undefined,
-  });
-}
 
 function slugifyHeadingText(text: string): string {
   const normalized = text
@@ -165,18 +129,16 @@ function processChildren(
   options: {
     searchQuery?: string;
     pathLinkPrefixes?: string[];
-    pathLinkAliases?: Record<string, string>;
     onOpenWorkspacePath?: (path: string) => void | Promise<void>;
   } = {},
 ): React.ReactNode {
-  const { searchQuery, pathLinkPrefixes, pathLinkAliases, onOpenWorkspacePath } = options;
+  const { searchQuery, pathLinkPrefixes, onOpenWorkspacePath } = options;
   const renderPlainText = (text: string) => highlightText(text, searchQuery ?? '');
 
   return React.Children.map(children, (child) => {
     if (typeof child === 'string') {
       return renderInlinePathReferences(child, {
         prefixes: pathLinkPrefixes,
-        aliases: pathLinkAliases,
         onOpenPath: onOpenWorkspacePath,
         renderPlainText,
       });
@@ -215,35 +177,6 @@ function decodeWorkspacePathLink(href: string): string {
   } catch {
     return href;
   }
-}
-
-function canHandleBeadLink(
-  url: string,
-  options: {
-    currentDocumentPath?: string;
-    workspaceAgentId?: string;
-    onOpenBeadId?: MarkdownRendererProps['onOpenBeadId'];
-  } = {},
-): boolean {
-  if (!options.onOpenBeadId) return false;
-  return parseBeadLinkHref(url, {
-    currentDocumentPath: options.currentDocumentPath,
-    workspaceAgentId: options.workspaceAgentId,
-  }) !== null;
-}
-
-function transformMarkdownUrl(
-  url: string,
-  options: {
-    currentDocumentPath?: string;
-    workspaceAgentId?: string;
-    onOpenBeadId?: MarkdownRendererProps['onOpenBeadId'];
-  } = {},
-): string {
-  if (canHandleBeadLink(url, options) || isWorkspacePathLink(url)) {
-    return url;
-  }
-  return defaultUrlTransform(url);
 }
 
 function splitWorkspaceLinkTarget(href: string): { path: string; fragment: string | null } {
@@ -294,20 +227,16 @@ export function MarkdownRenderer({
   currentDocumentPath,
   onOpenWorkspacePath,
   pathLinkPrefixes,
-  pathLinkAliases,
-  onOpenBeadId,
-  workspaceAgentId,
 }: MarkdownRendererProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const childOptions = useMemo(() => ({
     searchQuery,
     pathLinkPrefixes,
-    pathLinkAliases,
     onOpenWorkspacePath: onOpenWorkspacePath
       ? (path: string) => onOpenWorkspacePath(path, currentDocumentPath)
       : undefined,
-  }), [searchQuery, pathLinkPrefixes, pathLinkAliases, onOpenWorkspacePath, currentDocumentPath]);
+  }), [searchQuery, pathLinkPrefixes, onOpenWorkspacePath, currentDocumentPath]);
 
   const scrollToAnchorId = useCallback((anchorId: string, behavior: ScrollBehavior = 'smooth') => {
     const root = containerRef.current;
@@ -408,23 +337,9 @@ export function MarkdownRenderer({
           }
         }
 
-        const inlineContent = inline
-          ? (
-            <InlineCodeContent
-              codeString={codeString}
-              pathLinkPrefixes={pathLinkPrefixes}
-              pathLinkAliases={pathLinkAliases}
-              currentDocumentPath={currentDocumentPath}
-              onOpenWorkspacePath={onOpenWorkspacePath}
-            >
-              {children}
-            </InlineCodeContent>
-          )
-          : children;
-
         return (
           <code className={codeClassName} {...props}>
-            {inlineContent}
+            {children}
           </code>
         );
       },
@@ -457,8 +372,9 @@ export function MarkdownRenderer({
           );
         }
 
-        const beadTarget = parseBeadLinkHref(href, { currentDocumentPath, workspaceAgentId });
-        if (onOpenBeadId && beadTarget) {
+        if (onOpenWorkspacePath && isWorkspacePathLink(href)) {
+          const normalizedTarget = normalizeWorkspaceLinkTarget(href);
+          const fragment = getWorkspaceLinkFragment(href);
           return (
             <a
               {...props}
@@ -467,9 +383,14 @@ export function MarkdownRenderer({
               onClick={(event) => {
                 event.preventDefault();
                 Promise.resolve()
-                  .then(() => onOpenBeadId(beadTarget))
+                  .then(() => onOpenWorkspacePath(normalizedTarget, currentDocumentPath))
+                  .then(() => {
+                    if (fragment) {
+                      updateLocationHash(fragment);
+                    }
+                  })
                   .catch((error) => {
-                    console.error('Failed to open bead link:', error);
+                    console.error('Failed to open workspace path link:', error);
                   });
               }}
             >
@@ -478,75 +399,25 @@ export function MarkdownRenderer({
           );
         }
 
-        if (onOpenWorkspacePath && isWorkspacePathLink(href)) {
-          const normalizedTarget = normalizeWorkspaceLinkTarget(href);
-          const fragment = getWorkspaceLinkFragment(href);
-          return (
-            <MarkdownLinkContext.Provider value={true}>
-              <a
-                {...props}
-                href={href}
-                className={mergedClassName}
-                onClick={(event) => {
-                  event.preventDefault();
-                  Promise.resolve()
-                    .then(() => onOpenWorkspacePath(normalizedTarget, currentDocumentPath))
-                    .then(() => {
-                      if (fragment) {
-                        updateLocationHash(fragment);
-                      }
-                    })
-                    .catch((error) => {
-                      console.error('Failed to open workspace path link:', error);
-                    });
-                }}
-              >
-                {children}
-              </a>
-            </MarkdownLinkContext.Provider>
-          );
-        }
-
         return (
-          <MarkdownLinkContext.Provider value={true}>
-            <a
-              {...props}
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={mergedClassName}
-            >
-              {children}
-            </a>
-          </MarkdownLinkContext.Provider>
+          <a
+            {...props}
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={mergedClassName}
+          >
+            {children}
+          </a>
         );
       },
       ...(suppressImages ? { img: () => null } : {}),
     };
-  }, [
-    childOptions,
-    currentDocumentPath,
-    onOpenBeadId,
-    onOpenWorkspacePath,
-    pathLinkPrefixes,
-    pathLinkAliases,
-    scrollToAnchor,
-    suppressImages,
-    updateLocationHash,
-    workspaceAgentId,
-  ]);
+  }, [childOptions, currentDocumentPath, onOpenWorkspacePath, scrollToAnchor, suppressImages, updateLocationHash]);
 
   return (
     <div ref={containerRef} className={`markdown-content ${className}`}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkStableHeadingIds]}
-        urlTransform={(url) => transformMarkdownUrl(url, {
-          currentDocumentPath,
-          workspaceAgentId,
-          onOpenBeadId,
-        })}
-        components={components}
-      >
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkStableHeadingIds]} components={components}>
         {content}
       </ReactMarkdown>
     </div>

@@ -48,8 +48,8 @@ describe('CronsTab', () => {
     render(<CronsTab />);
 
     expect(screen.getByText(/cron unavailable/i)).toBeInTheDocument();
-    expect(screen.getByText(/openclaw config/i)).toBeInTheDocument();
-    expect(screen.getAllByText(/openclaw\.json/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/ZeroClaw config/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/ZeroClaw\.json/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/gateway\.tools\.allow/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/sessions_spawn/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/local install shortcut/i)).toBeInTheDocument();

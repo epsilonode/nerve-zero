@@ -27,12 +27,12 @@ import {
 } from '../lib/kanban-store.js';
 import { InvalidKanbanAssigneeError, resolveKanbanAssigneeRootSessionKey } from '../lib/kanban-assignee.js';
 import { invokeGatewayTool } from '../lib/gateway-client.js';
-import { gatewayRpcCall } from '../lib/gateway-rpc.js';
+import { getZeroClawSessionMessages, listZeroClawSessions } from '../lib/zeroclaw-sessions.js';
 import { withMutex } from '../lib/mutex.js';
 import { parseKanbanMarkers, stripKanbanMarkers } from '../lib/parseMarkers.js';
 import {
   buildKanbanFallbackRunKey,
-  launchKanbanFallbackSubagentViaRpc,
+  launchKanbanAssignedSubagent,
 } from '../lib/kanban-subagent-fallback.js';
 import type {
   KanbanTask,
@@ -48,6 +48,12 @@ const POLL_SESSIONS_ACTIVE_MINUTES = 24 * 60;
 const PARENT_ROOT_LOOKUP_ACTIVE_MINUTES = 7 * 24 * 60;
 const PARENT_ROOT_LOOKUP_SESSIONS_LIMIT = 1000;
 const POLL_SESSIONS_LIMIT = 200;
+
+function requiredParam(c: { req: { param(name: string): string | undefined } }, name: string): string {
+  const value = c.req.param(name);
+  if (!value) throw new Error(`Missing route parameter: ${name}`);
+  return value;
+}
 
 // ── Session completion poller ────────────────────────────────────────
 
@@ -298,14 +304,7 @@ async function reportKanbanChildCompletionToParent(params: {
   result?: string;
   error?: string;
 }): Promise<void> {
-  const message = buildKanbanParentCompletionMessage(params);
-  const suffix = params.outcome === 'completed' ? 'done' : 'failed';
-
-  await gatewayRpcCall('sessions.send', {
-    key: params.parentSessionKey,
-    message,
-    idempotencyKey: `kanban-parent-report:${params.task.id}:${params.childSessionKey}:${suffix}`,
-  });
+  void params;
 }
 
 /** Poll gateway subagents for a kanban run until it finishes, then complete the run. */
@@ -447,11 +446,14 @@ function pollFallbackSessionCompletion(
         return;
       }
 
-      const sessionsResponse = await gatewayRpcCall('sessions.list', {
-        activeMinutes: POLL_SESSIONS_ACTIVE_MINUTES,
-        limit: POLL_SESSIONS_LIMIT,
-      }) as { sessions?: GatewaySessionSummary[] };
-      const sessions = Array.isArray(sessionsResponse.sessions) ? sessionsResponse.sessions : [];
+      const sessions = (await listZeroClawSessions(POLL_SESSIONS_LIMIT)).map((session) => ({
+        key: session.sessionKey,
+        sessionKey: session.sessionKey,
+        status: session.state,
+        agentState: session.state,
+        busy: session.state !== 'idle',
+        processing: session.state !== 'idle',
+      })) as GatewaySessionSummary[];
 
       let activeSessionKey = task.run?.childSessionKey ?? task.run?.sessionId ?? identity.childSessionKey;
       if (!activeSessionKey) {
@@ -509,12 +511,11 @@ function pollFallbackSessionCompletion(
       if (isDone) {
         let resultText = 'Completed (no result text)';
         try {
-          const histResponse = await gatewayRpcCall('sessions.get', {
-            key: activeSessionKey,
-            limit: 3,
-            includeTools: true,
-          }) as { messages?: Array<Record<string, unknown>> };
-          const messages = Array.isArray(histResponse.messages) ? histResponse.messages : [];
+          const messages = (await getZeroClawSessionMessages(activeSessionKey, 3)).map((message) => ({
+            role: message.role,
+            content: message.content,
+            createdAt: Date.parse(message.createdAt),
+          }));
           resultText = getLastAssistantText(messages, resultText);
         } catch (err) {
           console.warn(`[kanban] Could not fetch history for ${activeSessionKey}:`, err);
@@ -757,7 +758,7 @@ app.get('/api/kanban/tasks', rateLimitGeneral, async (c) => {
 // GET /api/kanban/tasks/:id
 app.get('/api/kanban/tasks/:id', rateLimitGeneral, async (c) => {
   const store = getKanbanStore();
-  const id = c.req.param('id');
+  const id = requiredParam(c, 'id');
 
   try {
     const task = await store.getTask(id);
@@ -802,7 +803,7 @@ app.post('/api/kanban/tasks', rateLimitGeneral, async (c) => {
 // PATCH /api/kanban/tasks/:id
 app.patch('/api/kanban/tasks/:id', rateLimitGeneral, async (c) => {
   const store = getKanbanStore();
-  const id = c.req.param('id');
+  const id = requiredParam(c, 'id');
 
   let body: unknown;
   try {
@@ -851,7 +852,7 @@ app.patch('/api/kanban/tasks/:id', rateLimitGeneral, async (c) => {
 // DELETE /api/kanban/tasks/:id
 app.delete('/api/kanban/tasks/:id', rateLimitGeneral, async (c) => {
   const store = getKanbanStore();
-  const id = c.req.param('id');
+  const id = requiredParam(c, 'id');
 
   try {
     await store.deleteTask(id, 'operator');
@@ -867,7 +868,7 @@ app.delete('/api/kanban/tasks/:id', rateLimitGeneral, async (c) => {
 // POST /api/kanban/tasks/:id/reorder
 app.post('/api/kanban/tasks/:id/reorder', rateLimitGeneral, async (c) => {
   const store = getKanbanStore();
-  const id = c.req.param('id');
+  const id = requiredParam(c, 'id');
 
   let body: unknown;
   try {
@@ -1034,7 +1035,7 @@ app.post('/api/kanban/proposals', rateLimitGeneral, async (c) => {
 // POST /api/kanban/proposals/:id/approve
 app.post('/api/kanban/proposals/:id/approve', rateLimitGeneral, async (c) => {
   const store = getKanbanStore();
-  const id = c.req.param('id');
+  const id = requiredParam(c, 'id');
 
   try {
     const { proposal, task } = await store.approveProposal(id);
@@ -1058,7 +1059,7 @@ app.post('/api/kanban/proposals/:id/approve', rateLimitGeneral, async (c) => {
 // POST /api/kanban/proposals/:id/reject
 app.post('/api/kanban/proposals/:id/reject', rateLimitGeneral, async (c) => {
   const store = getKanbanStore();
-  const id = c.req.param('id');
+  const id = requiredParam(c, 'id');
 
   let body: unknown = {};
   try {
@@ -1136,7 +1137,7 @@ function handleWorkflowError(c: Context, err: unknown) {
 // POST /api/kanban/tasks/:id/execute
 app.post('/api/kanban/tasks/:id/execute', rateLimitGeneral, async (c) => {
   const store = getKanbanStore();
-  const id = c.req.param('id');
+  const id = requiredParam(c, 'id');
 
   let body: unknown = {};
   try {
@@ -1163,28 +1164,9 @@ app.post('/api/kanban/tasks/:id/execute', rateLimitGeneral, async (c) => {
         return { duplicate: true } as const;
       }
 
-      const assignedParentSessionKey = resolveKanbanAssigneeRootSessionKey(existing.assignee);
-      if (assignedParentSessionKey) {
-        const recentSessionsResponse = await gatewayRpcCall('sessions.list', {
-          activeMinutes: PARENT_ROOT_LOOKUP_ACTIVE_MINUTES,
-          limit: PARENT_ROOT_LOOKUP_SESSIONS_LIMIT,
-        }) as { sessions?: GatewaySessionSummary[] };
-        const recentSessions = Array.isArray(recentSessionsResponse.sessions) ? recentSessionsResponse.sessions : [];
-
-        let parentSessionExists = recentSessions.some((session) => getSessionKey(session) === assignedParentSessionKey);
-        if (!parentSessionExists) {
-          const fullSessionsResponse = await gatewayRpcCall('sessions.list', {
-            limit: PARENT_ROOT_LOOKUP_SESSIONS_LIMIT,
-          }) as { sessions?: GatewaySessionSummary[] };
-          const fullSessions = Array.isArray(fullSessionsResponse.sessions) ? fullSessionsResponse.sessions : [];
-          parentSessionExists = fullSessions.some((session) => getSessionKey(session) === assignedParentSessionKey);
-        }
-
-        if (!parentSessionExists) {
-          throw new KanbanExecutionPreflightError(`Parent agent session not found: ${assignedParentSessionKey}`);
-        }
-
-        const config = await store.getConfig();
+        const assignedParentSessionKey = resolveKanbanAssigneeRootSessionKey(existing.assignee);
+        if (assignedParentSessionKey) {
+          const config = await store.getConfig();
         const { model, thinking } = resolveKanbanLaunchOptions({
           requestedModel: parsed.data.model,
           taskModel: existing.model,
@@ -1333,7 +1315,7 @@ Deliver your result as a clear summary of what was done.`,
         runId?: string;
       };
       try {
-        launchResult = await launchKanbanFallbackSubagentViaRpc({
+        launchResult = await launchKanbanAssignedSubagent({
           label: fallbackLaunch.label,
           task: fallbackLaunch.prompt,
           parentSessionKey: fallbackLaunch.parentSessionKey,
@@ -1393,7 +1375,7 @@ Deliver your result as a clear summary of what was done.`,
 // POST /api/kanban/tasks/:id/approve
 app.post('/api/kanban/tasks/:id/approve', rateLimitGeneral, async (c) => {
   const store = getKanbanStore();
-  const id = c.req.param('id');
+  const id = requiredParam(c, 'id');
 
   let body: unknown = {};
   try {
@@ -1422,7 +1404,7 @@ app.post('/api/kanban/tasks/:id/approve', rateLimitGeneral, async (c) => {
 // POST /api/kanban/tasks/:id/reject
 app.post('/api/kanban/tasks/:id/reject', rateLimitGeneral, async (c) => {
   const store = getKanbanStore();
-  const id = c.req.param('id');
+  const id = requiredParam(c, 'id');
 
   let body: unknown;
   try {
@@ -1450,7 +1432,7 @@ app.post('/api/kanban/tasks/:id/reject', rateLimitGeneral, async (c) => {
 // POST /api/kanban/tasks/:id/abort
 app.post('/api/kanban/tasks/:id/abort', rateLimitGeneral, async (c) => {
   const store = getKanbanStore();
-  const id = c.req.param('id');
+  const id = requiredParam(c, 'id');
 
   let body: unknown = {};
   try {
@@ -1487,7 +1469,7 @@ const completeSchema = z.object({
 // POST /api/kanban/tasks/:id/complete
 app.post('/api/kanban/tasks/:id/complete', rateLimitGeneral, async (c) => {
   const store = getKanbanStore();
-  const id = c.req.param('id');
+  const id = requiredParam(c, 'id');
 
   let body: unknown = {};
   try {

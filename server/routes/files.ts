@@ -30,7 +30,7 @@ function allowedPrefixes(): string[] {
   const home = os.homedir();
   return [
     '/tmp',
-    path.join(home, '.openclaw'),
+    path.join(home, '.ZeroClaw'),
     config.memoryDir,
   ].filter(Boolean);
 }

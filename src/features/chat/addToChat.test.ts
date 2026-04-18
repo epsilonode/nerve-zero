@@ -4,18 +4,18 @@ import { formatBeadAddToChat, formatPlanAddToChat, formatWorkspacePathAddToChat,
 describe('addToChat helpers', () => {
   it('formats plan context with source, title, and path', () => {
     expect(formatPlanAddToChat({
-      source: 'Gambit OpenClaw Nerve',
+      source: 'Gambit ZeroClaw Nerve',
       title: 'Nerve mobile polish',
       path: '.plans/2026-03-15-mobile-plans-back-button-and-add-to-chat.md',
-    })).toBe('Plan context:\n- Source: Gambit OpenClaw Nerve\n- Title: Nerve mobile polish\n- Path: .plans/2026-03-15-mobile-plans-back-button-and-add-to-chat.md');
+    })).toBe('Plan context:\n- Source: Gambit ZeroClaw Nerve\n- Title: Nerve mobile polish\n- Path: .plans/2026-03-15-mobile-plans-back-button-and-add-to-chat.md');
   });
 
   it('formats bead context with source, title, and id', () => {
     expect(formatBeadAddToChat({
-      source: '~/.openclaw/workspace/projects/gambit-openclaw-nerve',
+      source: '~/.ZeroClaw/workspace/projects/gambit-ZeroClaw-nerve',
       title: 'Implement Add to Chat',
       id: 'nerve-qn2',
-    })).toBe('Bead context:\n- Source: ~/.openclaw/workspace/projects/gambit-openclaw-nerve\n- Title: Implement Add to Chat\n- ID: nerve-qn2');
+    })).toBe('Bead context:\n- Source: ~/.ZeroClaw/workspace/projects/gambit-ZeroClaw-nerve\n- Title: Implement Add to Chat\n- ID: nerve-qn2');
   });
 
   it('omits blank source lines when no source is available', () => {

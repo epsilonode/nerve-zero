@@ -8,7 +8,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { gatewayRpcCall } from './gateway-rpc.js';
+import { deleteZeroClawSession, getZeroClawSessionMessages, listZeroClawSessions, spawnZeroClawSession } from './zeroclaw-sessions.js';
 
 export type SubagentCleanupMode = 'keep' | 'delete';
 
@@ -224,12 +224,7 @@ async function reportSubagentResultToParent(params: {
   result?: string;
   error?: string;
 }): Promise<void> {
-  const suffix = params.outcome === 'completed' ? 'done' : 'failed';
-  await gatewayRpcCall('sessions.send', {
-    key: params.parentSessionKey,
-    message: buildSubagentParentCompletionMessage(params),
-    idempotencyKey: `subagent-parent-report:${params.childSessionKey}:${suffix}`,
-  });
+  void params;
 }
 
 export function extractAssistantResultForLaunch(
@@ -332,10 +327,7 @@ function startCompletionMonitor(params: {
 
     if (reportSent && params.cleanup === 'delete') {
       try {
-        await gatewayRpcCall('sessions.delete', {
-          key: params.childSessionKey,
-          deleteTranscript: true,
-        });
+        await deleteZeroClawSession(params.childSessionKey);
       } catch (error) {
         console.warn(`[subagent-spawn] Failed to delete child ${params.childSessionKey}:`, error);
       }
@@ -350,11 +342,14 @@ function startCompletionMonitor(params: {
     }
 
     try {
-      const listResponse = await gatewayRpcCall('sessions.list', {
-        activeMinutes: POLL_SESSIONS_ACTIVE_MINUTES,
-        limit: POLL_SESSIONS_LIMIT,
-      }) as { sessions?: GatewaySessionSummary[] };
-      const sessions = Array.isArray(listResponse.sessions) ? listResponse.sessions : [];
+      const sessions = (await listZeroClawSessions(POLL_SESSIONS_LIMIT)).map((session) => ({
+        key: session.sessionKey,
+        sessionKey: session.sessionKey,
+        status: session.state,
+        agentState: session.state,
+        busy: session.state !== 'idle',
+        processing: session.state !== 'idle',
+      })) as GatewaySessionSummary[];
       const session = sessions.find((candidate) => getSessionKey(candidate) === params.childSessionKey);
 
       if (!session) {
@@ -376,12 +371,11 @@ function startCompletionMonitor(params: {
         return;
       }
 
-      const historyResponse = await gatewayRpcCall('sessions.get', {
-        key: params.childSessionKey,
-        limit: 20,
-        includeTools: true,
-      }) as { messages?: Array<Record<string, unknown>> };
-      const messages = Array.isArray(historyResponse.messages) ? historyResponse.messages : [];
+      const messages = (await getZeroClawSessionMessages(params.childSessionKey, 20)).map((message) => ({
+        role: message.role,
+        content: message.content,
+        createdAt: Date.parse(message.createdAt),
+      }));
       const extracted = extractAssistantResultForLaunch(messages, {
         runId: params.runId,
         launchTimestamp: params.launchTimestamp,
@@ -413,28 +407,15 @@ async function launchDirect(params: SpawnSubagentParams): Promise<SpawnSubagentR
     throw new Error(`parentSessionKey must be a top-level root session key (agent:<id>:main): ${params.parentSessionKey}`);
   }
 
-  const requestedKey = buildRequestedChildSessionKey(params.parentSessionKey);
-  const createResponse = await gatewayRpcCall('sessions.create', {
-    key: requestedKey,
-    parentSessionKey: params.parentSessionKey,
-    ...(params.label ? { label: params.label } : {}),
-    ...(params.model ? { model: params.model } : {}),
-  }) as { key?: string; sessionKey?: string };
-
-  const sessionKey = typeof createResponse.key === 'string' && createResponse.key.trim()
-    ? createResponse.key
-    : typeof createResponse.sessionKey === 'string' && createResponse.sessionKey.trim()
-      ? createResponse.sessionKey
-      : requestedKey;
-
   const launchTimestamp = Date.now();
-
-  const sendResponse = await gatewayRpcCall('sessions.send', {
-    key: sessionKey,
-    message: params.task,
-    ...(params.thinking ? { thinking: params.thinking } : {}),
-    idempotencyKey: `subagent-spawn:${Date.now()}:${randomUUID().slice(0, 8)}`,
-  }) as { runId?: string };
+  const label = params.label || buildRequestedChildSessionKey(params.parentSessionKey);
+  const sendResponse = await spawnZeroClawSession({
+    task: params.task,
+    label,
+    model: params.model,
+    thinking: params.thinking,
+  });
+  const sessionKey = sendResponse.sessionKey;
 
   startCompletionMonitor({
     parentSessionKey: params.parentSessionKey,
@@ -453,51 +434,7 @@ async function launchDirect(params: SpawnSubagentParams): Promise<SpawnSubagentR
 }
 
 async function launchViaMarker(params: SpawnSubagentParams): Promise<SpawnSubagentResult> {
-  const snapshotResponse = await gatewayRpcCall('sessions.list', {
-    activeMinutes: POLL_SESSIONS_ACTIVE_MINUTES,
-    limit: POLL_SESSIONS_LIMIT,
-  }) as { sessions?: GatewaySessionSummary[] };
-  const snapshotSessions = Array.isArray(snapshotResponse.sessions) ? snapshotResponse.sessions : [];
-  const knownSessionKeysBefore = new Set(
-    snapshotSessions
-      .map(getSessionKey)
-      .filter((value): value is string => Boolean(value)),
-  );
-
-  await gatewayRpcCall('chat.send', {
-    sessionKey: params.parentSessionKey,
-    message: buildSpawnSubagentMarkerMessage({
-      task: params.task,
-      label: params.label,
-      model: params.model,
-      thinking: params.thinking,
-      cleanup: params.cleanup ?? 'keep',
-    }),
-    idempotencyKey: `subagent-marker:${Date.now()}:${randomUUID().slice(0, 8)}`,
-  });
-
-  const deadline = Date.now() + MARKER_DISCOVERY_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    await new Promise<void>((resolve) => {
-      schedule(resolve, MARKER_DISCOVERY_POLL_MS);
-    });
-
-    const listResponse = await gatewayRpcCall('sessions.list', {
-      activeMinutes: POLL_SESSIONS_ACTIVE_MINUTES,
-      limit: POLL_SESSIONS_LIMIT,
-    }) as { sessions?: GatewaySessionSummary[] };
-    const sessions = Array.isArray(listResponse.sessions) ? listResponse.sessions : [];
-    const spawned = pickMarkerSpawnedChildSession(sessions, params.parentSessionKey, knownSessionKeysBefore);
-    const spawnedKey = spawned ? getSessionKey(spawned) : null;
-    if (spawnedKey) {
-      return {
-        sessionKey: spawnedKey,
-        mode: 'marker',
-      };
-    }
-  }
-
-  throw new Error('Timed out waiting for the new subagent session to appear');
+  return launchDirect(params).then((result) => ({ ...result, mode: 'marker' as const }));
 }
 
 export async function spawnSubagent(params: SpawnSubagentParams): Promise<SpawnSubagentResult> {

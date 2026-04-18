@@ -32,7 +32,7 @@ beforeEach(async () => {
       if (!match || match[1] === 'main') return null;
       return `agent:${match[1]}:main`;
     }),
-    launchKanbanFallbackSubagentViaRpc: vi.fn(async ({ label, parentSessionKey }: { label: string; parentSessionKey: string }) => ({
+    launchKanbanAssignedSubagent: vi.fn(async ({ label, parentSessionKey }: { label: string; parentSessionKey: string }) => ({
       sessionKey: buildMockRootSessionKey(label),
       parentSessionKey,
       knownSessionKeysBefore: [parentSessionKey],
@@ -772,7 +772,7 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
         if (!match || match[1] === 'main') return null;
         return `agent:${match[1]}:main`;
       }),
-      launchKanbanFallbackSubagentViaRpc: launchMock,
+      launchKanbanAssignedSubagent: launchMock,
     }));
 
     const gatewayRpcMock: GatewayRpcMock = vi.fn(async (method) => {
@@ -816,7 +816,7 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
         if (!match || match[1] === 'main') return null;
         return `agent:${match[1]}:main`;
       }),
-      launchKanbanFallbackSubagentViaRpc: launchMock,
+      launchKanbanAssignedSubagent: launchMock,
     }));
 
     const gatewayRpcMock: GatewayRpcMock = vi.fn(async (method) => {
@@ -860,7 +860,7 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
         if (!match || match[1] === 'main') return null;
         return `agent:${match[1]}:main`;
       }),
-      launchKanbanFallbackSubagentViaRpc: launchMock,
+      launchKanbanAssignedSubagent: launchMock,
     }));
 
     const gatewayRpcMock: GatewayRpcMock = vi.fn(async (method) => {
@@ -1038,7 +1038,7 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
     vi.doMock('../lib/kanban-subagent-fallback.js', () => ({
       buildKanbanFallbackRunKey: buildMockRootSessionKey,
       resolveKanbanFallbackParentSessionKey: vi.fn(() => 'agent:reviewer:main'),
-      launchKanbanFallbackSubagentViaRpc: vi.fn(async ({ label, parentSessionKey, model, thinking }: {
+      launchKanbanAssignedSubagent: vi.fn(async ({ label, parentSessionKey, model, thinking }: {
         label: string;
         parentSessionKey: string;
         model?: string;
@@ -1084,7 +1084,7 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
     vi.doMock('../lib/kanban-subagent-fallback.js', () => ({
       buildKanbanFallbackRunKey: buildMockRootSessionKey,
       resolveKanbanFallbackParentSessionKey: vi.fn(() => 'agent:reviewer:main'),
-      launchKanbanFallbackSubagentViaRpc: vi.fn(async ({ label, parentSessionKey, model, thinking }: {
+      launchKanbanAssignedSubagent: vi.fn(async ({ label, parentSessionKey, model, thinking }: {
         label: string;
         parentSessionKey: string;
         model?: string;
@@ -1161,7 +1161,7 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
     vi.doMock('../lib/kanban-subagent-fallback.js', () => ({
       buildKanbanFallbackRunKey: buildMockRootSessionKey,
       resolveKanbanFallbackParentSessionKey: vi.fn(() => 'agent:reviewer:main'),
-      launchKanbanFallbackSubagentViaRpc: vi.fn(async ({ label, parentSessionKey }: { label: string; parentSessionKey: string }) => {
+      launchKanbanAssignedSubagent: vi.fn(async ({ label, parentSessionKey }: { label: string; parentSessionKey: string }) => {
         rootHelperCalled = true;
         helperLabel = label;
         return {
@@ -1190,7 +1190,7 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
     vi.doMock('../lib/kanban-subagent-fallback.js', () => ({
       buildKanbanFallbackRunKey: buildMockRootSessionKey,
       resolveKanbanFallbackParentSessionKey: vi.fn(() => 'agent:reviewer:main'),
-      launchKanbanFallbackSubagentViaRpc: vi.fn(async ({ label, parentSessionKey }: { label: string; parentSessionKey: string }) => {
+      launchKanbanAssignedSubagent: vi.fn(async ({ label, parentSessionKey }: { label: string; parentSessionKey: string }) => {
         helperLabel = label;
         return {
           sessionKey: buildMockRootSessionKey(label),
@@ -1219,7 +1219,7 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
     vi.doMock('../lib/kanban-subagent-fallback.js', () => ({
       buildKanbanFallbackRunKey: buildMockRootSessionKey,
       resolveKanbanFallbackParentSessionKey: vi.fn(() => 'agent:reviewer:main'),
-      launchKanbanFallbackSubagentViaRpc: vi.fn(() => new Promise((resolve) => {
+      launchKanbanAssignedSubagent: vi.fn(() => new Promise((resolve) => {
         resolveLaunch = resolve;
       })),
     }));
@@ -1257,7 +1257,7 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
     vi.doMock('../lib/kanban-subagent-fallback.js', () => ({
       buildKanbanFallbackRunKey: buildMockRootSessionKey,
       resolveKanbanFallbackParentSessionKey: vi.fn(() => 'agent:reviewer:main'),
-      launchKanbanFallbackSubagentViaRpc: vi.fn(async ({ label, parentSessionKey }: { label: string; parentSessionKey: string }) => ({
+      launchKanbanAssignedSubagent: vi.fn(async ({ label, parentSessionKey }: { label: string; parentSessionKey: string }) => ({
         sessionKey: buildMockRootSessionKey(label),
         parentSessionKey,
         childSessionKey: expectedChildSessionKey,
@@ -1290,7 +1290,7 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
     vi.doMock('../lib/kanban-subagent-fallback.js', () => ({
       buildKanbanFallbackRunKey: buildMockRootSessionKey,
       resolveKanbanFallbackParentSessionKey: vi.fn(() => 'agent:reviewer:main'),
-      launchKanbanFallbackSubagentViaRpc: vi.fn(() => new Promise((_, reject) => {
+      launchKanbanAssignedSubagent: vi.fn(() => new Promise((_, reject) => {
         rejectLaunch = reject;
       })),
     }));
@@ -1335,7 +1335,7 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
         if (!match || match[1] === 'main') return null;
         return `agent:${match[1]}:main`;
       }),
-      launchKanbanFallbackSubagentViaRpc: launchMock,
+      launchKanbanAssignedSubagent: launchMock,
     }));
 
     const gatewayRpcMock = vi.fn(async (method: string) => {
@@ -1381,7 +1381,7 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
     vi.doMock('../lib/kanban-subagent-fallback.js', () => ({
       buildKanbanFallbackRunKey: buildMockRootSessionKey,
       resolveKanbanFallbackParentSessionKey: vi.fn((value?: string) => value == null || value === 'operator' ? null : 'agent:designer:main'),
-      launchKanbanFallbackSubagentViaRpc: launchMock,
+      launchKanbanAssignedSubagent: launchMock,
     }));
 
     const app = await buildApp({ executionMode: 'primary', invokeGatewayToolMock });
@@ -1415,7 +1415,7 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
         if (!match || match[1] === 'main') return null;
         return `agent:${match[1]}:main`;
       }),
-      launchKanbanFallbackSubagentViaRpc: launchMock,
+      launchKanbanAssignedSubagent: launchMock,
     }));
 
     const gatewayRpcMock = vi.fn(async (method: string) => {
@@ -1442,57 +1442,6 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
     expect(invokeGatewayToolMock).not.toHaveBeenCalled();
   });
 
-  it('falls back to the full session list when the assigned root is older than the recent-session window', async () => {
-    const invokeGatewayToolMock = vi.fn(async () => ({ sessionKey: 'agent:main:subagent:unexpected' }));
-    const launchMock = vi.fn(async ({ label, parentSessionKey }: { label: string; parentSessionKey: string }) => ({
-      sessionKey: buildMockRootSessionKey(label),
-      parentSessionKey,
-      knownSessionKeysBefore: [parentSessionKey],
-    }));
-
-    vi.doMock('../lib/kanban-subagent-fallback.js', () => ({
-      buildKanbanFallbackRunKey: buildMockRootSessionKey,
-      resolveKanbanFallbackParentSessionKey: vi.fn((assignee?: string) => {
-        if (!assignee || assignee === 'operator') return null;
-        const match = assignee.match(/^agent:([^:]+)/);
-        if (!match || match[1] === 'main') return null;
-        return `agent:${match[1]}:main`;
-      }),
-      launchKanbanFallbackSubagentViaRpc: launchMock,
-    }));
-
-    const gatewayRpcMock = vi.fn(async (method: string, params?: Record<string, unknown>) => {
-      if (method === 'sessions.list' && params?.activeMinutes === 7 * 24 * 60) {
-        return { sessions: [{ sessionKey: 'agent:reviewer:main' }] };
-      }
-      if (method === 'sessions.list' && params?.limit === 1000) {
-        return { sessions: [{ sessionKey: 'agent:reviewer:main' }, { sessionKey: 'agent:designer:main' }] };
-      }
-      return {};
-    });
-
-    const app = await buildApp({
-      executionMode: 'primary',
-      invokeGatewayToolMock,
-      gatewayRpcMock,
-    });
-    const task = await createTask(app, { status: 'todo', assignee: 'agent:designer' });
-
-    const res = await app.request(`/api/kanban/tasks/${task.id}/execute`, json({}));
-    expect(res.status).toBe(200);
-
-    expect(gatewayRpcMock).toHaveBeenCalledWith('sessions.list', {
-      activeMinutes: 7 * 24 * 60,
-      limit: 1000,
-    });
-    expect(gatewayRpcMock).toHaveBeenCalledWith('sessions.list', {
-      limit: 1000,
-    });
-    expect(launchMock).toHaveBeenCalledWith(expect.objectContaining({
-      parentSessionKey: 'agent:designer:main',
-    }));
-  });
-
   it.each([
     'agent:designer:main',
     'agent:designer:subagent:child',
@@ -1512,7 +1461,7 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
         if (!match || match[1] === 'main') return null;
         return `agent:${match[1]}:main`;
       }),
-      launchKanbanFallbackSubagentViaRpc: launchMock,
+      launchKanbanAssignedSubagent: launchMock,
     }));
 
     const gatewayRpcMock = vi.fn(async (method: string) => {
@@ -1554,7 +1503,7 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
         if (!match || match[1] === 'main') return null;
         return `agent:${match[1]}:main`;
       }),
-      launchKanbanFallbackSubagentViaRpc: launchMock,
+      launchKanbanAssignedSubagent: launchMock,
     }));
 
     const app = await buildApp({ executionMode: 'primary', invokeGatewayToolMock });
@@ -1584,7 +1533,7 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
         if (!match || match[1] === 'main') return null;
         return `agent:${match[1]}:main`;
       }),
-      launchKanbanFallbackSubagentViaRpc: launchMock,
+      launchKanbanAssignedSubagent: launchMock,
     }));
 
     const app = await buildApp({ executionMode: 'fallback' });
@@ -1613,7 +1562,7 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
     vi.doMock('../lib/kanban-subagent-fallback.js', () => ({
       buildKanbanFallbackRunKey: buildMockRootSessionKey,
       resolveKanbanFallbackParentSessionKey: vi.fn((value?: string) => value == null || value === 'operator' ? null : 'agent:designer:main'),
-      launchKanbanFallbackSubagentViaRpc: launchMock,
+      launchKanbanAssignedSubagent: launchMock,
     }));
 
     const app = await buildApp({ executionMode: 'fallback' });
@@ -1637,7 +1586,7 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
     vi.doMock('../lib/kanban-subagent-fallback.js', () => ({
       buildKanbanFallbackRunKey: buildMockRootSessionKey,
       resolveKanbanFallbackParentSessionKey: vi.fn(() => 'agent:reviewer:main'),
-      launchKanbanFallbackSubagentViaRpc: vi.fn(async ({ label, parentSessionKey, model, thinking }: {
+      launchKanbanAssignedSubagent: vi.fn(async ({ label, parentSessionKey, model, thinking }: {
         label: string;
         parentSessionKey: string;
         model?: string;
@@ -1713,7 +1662,7 @@ describe('POST /api/kanban/tasks/:id/execute', () => {
     vi.doMock('../lib/kanban-subagent-fallback.js', () => ({
       buildKanbanFallbackRunKey: buildMockRootSessionKey,
       resolveKanbanFallbackParentSessionKey: vi.fn(() => 'agent:reviewer:main'),
-      launchKanbanFallbackSubagentViaRpc: launchMock,
+      launchKanbanAssignedSubagent: launchMock,
     }));
 
     const app = await buildApp({ executionMode: 'fallback' });
@@ -2503,7 +2452,7 @@ describe('POST /api/kanban/tasks/:id/complete — run key integrity', () => {
     vi.doMock('../lib/kanban-subagent-fallback.js', () => ({
       buildKanbanFallbackRunKey: buildMockRootSessionKey,
       resolveKanbanFallbackParentSessionKey: vi.fn(() => 'agent:reviewer:main'),
-      launchKanbanFallbackSubagentViaRpc: vi.fn(async ({ label, parentSessionKey }: { label: string; parentSessionKey: string }) => ({
+      launchKanbanAssignedSubagent: vi.fn(async ({ label, parentSessionKey }: { label: string; parentSessionKey: string }) => ({
         sessionKey: buildMockRootSessionKey(label),
         parentSessionKey,
         childSessionKey,

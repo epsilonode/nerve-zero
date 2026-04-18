@@ -144,41 +144,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     setStream: streamHook.setStream,
   });
 
-  const {
-    loadHistory,
-    getAllMessages,
-    applyMessageWindow,
-  } = msgHook;
-  const {
-    triggerRecovery,
-    clearDisconnectState,
-    captureDisconnectState,
-    wasGeneratingOnDisconnect,
-    isRecoveryInFlight,
-    isRecoveryPending,
-    incrementGeneration,
-    getGeneration,
-  } = recoveryHook;
-  const {
-    lastEventTimestamp,
-    setProcessingStage,
-    setLastEventTimestamp,
-    setActivityLog,
-    addActivityEntry,
-    completeActivityEntry,
-    startThinking,
-    captureThinkingDuration,
-    scheduleStreamingUpdate,
-    clearStreamBuffer,
-    getThinkingDuration,
-    resetThinking,
-  } = streamHook;
-  const {
-    playCompletionPing,
-    resetPlayedSounds,
-    handleFinalTTS,
-  } = ttsHook;
-
   // ─── Reset transient state on session switch ──────────────────────────────
   useEffect(() => {
     setIsGenerating(false);
@@ -202,29 +167,31 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     const prevConnection = previousConnectionStateRef.current;
 
     if (connectionState === 'connected') {
-      if (prevConnection === 'reconnecting' && wasGeneratingOnDisconnect()) {
-        triggerRecovery('reconnect');
+      if (prevConnection === 'reconnecting' && recoveryHook.wasGeneratingOnDisconnect()) {
+        recoveryHook.triggerRecovery('reconnect');
       }
-      clearDisconnectState();
+      recoveryHook.clearDisconnectState();
     }
 
     if (connectionState === 'reconnecting' && prevConnection === 'connected') {
-      captureDisconnectState();
+      recoveryHook.captureDisconnectState();
     }
 
     previousConnectionStateRef.current = connectionState;
   }, [
     connectionState,
-    wasGeneratingOnDisconnect,
-    triggerRecovery,
-    clearDisconnectState,
-    captureDisconnectState,
+    currentSession,
+    msgHook.loadHistory,
+    recoveryHook.wasGeneratingOnDisconnect,
+    recoveryHook.triggerRecovery,
+    recoveryHook.clearDisconnectState,
+    recoveryHook.captureDisconnectState,
   ]);
 
   useEffect(() => {
     if (connectionState !== 'connected' || !currentSession) return;
-    loadHistory(currentSession);
-  }, [connectionState, currentSession, loadHistory]);
+    msgHook.loadHistory(currentSession);
+  }, [connectionState, currentSession, msgHook.loadHistory]);
 
   // ─── Periodic history poll for sub-agent sessions ─────────────────────────
   const isSubagentSession = currentSession ? isSubagentSessionKey(currentSession) : false;
@@ -245,14 +212,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         const sk = currentSessionRef.current;
         const result = await loadChatHistory({ rpc, sessionKey: sk, limit: 500 });
         if (sk !== currentSessionRef.current) return;
-        const prev = getAllMessages();
+        const prev = msgHook.getAllMessages();
         if (
           result.length === prev.length &&
           result.length > 0 &&
           result[result.length - 1]?.rawText === prev[prev.length - 1]?.rawText &&
           result[result.length - 1]?.role === prev[prev.length - 1]?.role
         ) return;
-        applyMessageWindow(result, false);
+        msgHook.applyMessageWindow(result, false);
       } catch { /* best-effort */ } finally {
         subagentPollInFlightRef.current = false;
       }
@@ -262,26 +229,26 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       clearInterval(pollInterval);
       subagentPollInFlightRef.current = false;
     };
-  }, [isSubagentActive, connectionState, currentSession, rpc, applyMessageWindow, getAllMessages]);
+  }, [isSubagentActive, connectionState, currentSession, rpc, msgHook.applyMessageWindow, msgHook.getAllMessages]);
 
   // ─── Watchdog: if stream stalls, recover once ─────────────────────────────
   useEffect(() => {
-    if (!isGenerating || !lastEventTimestamp) return;
+    if (!isGenerating || !streamHook.lastEventTimestamp) return;
 
     const timer = setTimeout(() => {
-      const elapsed = Date.now() - lastEventTimestamp;
-      if (elapsed >= 12_000 && !isRecoveryInFlight() && !isRecoveryPending()) {
-        triggerRecovery('chat-gap');
+      const elapsed = Date.now() - streamHook.lastEventTimestamp;
+      if (elapsed >= 12_000 && !recoveryHook.isRecoveryInFlight() && !recoveryHook.isRecoveryPending()) {
+        recoveryHook.triggerRecovery('chat-gap');
       }
     }, 12_000);
 
     return () => clearTimeout(timer);
   }, [
     isGenerating,
-    lastEventTimestamp,
-    isRecoveryInFlight,
-    isRecoveryPending,
-    triggerRecovery,
+    streamHook.lastEventTimestamp,
+    recoveryHook.isRecoveryInFlight,
+    recoveryHook.isRecoveryPending,
+    recoveryHook.triggerRecovery,
   ]);
 
   // ─── Subscribe to streaming events ────────────────────────────────────────
@@ -291,7 +258,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const triggerRecoveryOnce = (reason: RecoveryReason) => {
         if (recoveryTriggeredThisEvent) return;
         recoveryTriggeredThisEvent = true;
-        triggerRecovery(reason);
+        recoveryHook.triggerRecovery(reason);
       };
 
       const classified = classifyStreamEvent(msg);
@@ -306,7 +273,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           isRootChildSession(classified.sessionKey, getRootAgentSessionKey(currentSk) || currentSk) &&
           (classified.type === 'chat_final' || classified.type === 'lifecycle_end')
         ) {
-          triggerRecovery('subagent-complete');
+          recoveryHook.triggerRecovery('subagent-complete');
         }
         return;
       }
@@ -327,32 +294,32 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
         if (type === 'lifecycle_start') {
           setIsGenerating(true);
-          setProcessingStage('thinking');
-          setLastEventTimestamp(Date.now());
+          streamHook.setProcessingStage('thinking');
+          streamHook.setLastEventTimestamp(Date.now());
           return;
         }
 
         if (type === 'lifecycle_end') {
           setIsGenerating(false);
-          setProcessingStage(null);
-          setActivityLog([]);
-          setLastEventTimestamp(0);
-          playCompletionPing();
+          streamHook.setProcessingStage(null);
+          streamHook.setActivityLog([]);
+          streamHook.setLastEventTimestamp(0);
+          ttsHook.playCompletionPing();
 
-          incrementGeneration();
+          recoveryHook.incrementGeneration();
 
           const activeRun = activeRunIdRef.current;
           const runFinalized = activeRun ? runsRef.current.get(activeRun)?.finalized : false;
           if (!runFinalized) {
-            triggerRecovery('reconnect');
+            recoveryHook.triggerRecovery('reconnect');
           }
           activeRunIdRef.current = null;
           return;
         }
 
         if (type === 'assistant_stream') {
-          setProcessingStage('streaming');
-          setLastEventTimestamp(Date.now());
+          streamHook.setProcessingStage('streaming');
+          streamHook.setLastEventTimestamp(Date.now());
           return;
         }
 
@@ -361,30 +328,30 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           setIsGenerating(true);
         }
 
-        setLastEventTimestamp(Date.now());
+        streamHook.setLastEventTimestamp(Date.now());
 
         if (type === 'agent_tool_start') {
-          setProcessingStage('tool_use');
-          addActivityEntry(ap);
+          streamHook.setProcessingStage('tool_use');
+          streamHook.addActivityEntry(ap);
           return;
         }
 
         if (type === 'agent_tool_result') {
           const completedId = ap.data?.toolCallId;
-          if (completedId) completeActivityEntry(completedId);
+          if (completedId) streamHook.completeActivityEntry(completedId);
 
           if (toolResultRefreshRef.current) clearTimeout(toolResultRefreshRef.current);
           const capturedSession = currentSessionRef.current;
-          const capturedGeneration = getGeneration();
+          const capturedGeneration = recoveryHook.getGeneration();
           toolResultRefreshRef.current = setTimeout(async () => {
             toolResultRefreshRef.current = null;
             try {
               const recovered = await loadChatHistory({ rpc, sessionKey: capturedSession, limit: 100 });
               if (capturedSession !== currentSessionRef.current) return;
-              if (capturedGeneration !== getGeneration()) return;
+              if (capturedGeneration !== recoveryHook.getGeneration()) return;
               if (recovered.length > 0) {
-                const merged = mergeRecoveredTail(getAllMessages(), recovered);
-                applyMessageWindow(merged, false);
+                const merged = mergeRecoveredTail(msgHook.getAllMessages(), recovered);
+                msgHook.applyMessageWindow(merged, false);
               }
             } catch { /* best-effort */ }
           }, 300);
@@ -393,7 +360,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
         if (type === 'agent_state' && agentState) {
           const stage = deriveProcessingStage(agentState);
-          if (stage) setProcessingStage(stage);
+          if (stage) streamHook.setProcessingStage(stage);
         }
         return;
       }
@@ -418,7 +385,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const prevRunSeq = run.lastChatSeq;
       run.lastChatSeq = updateHighestSeq(run.lastChatSeq, classified.chatSeq);
 
-      setLastEventTimestamp(Date.now());
+      streamHook.setLastEventTimestamp(Date.now());
 
       if (type === 'chat_started') {
         activeRunIdRef.current = runId;
@@ -430,10 +397,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         run.bufferText = '';
 
         setIsGenerating(true);
-        resetPlayedSounds();
-        setProcessingStage('thinking');
-        setActivityLog([]);
-        startThinking(runId);
+        ttsHook.resetPlayedSounds();
+        streamHook.setProcessingStage('thinking');
+        streamHook.setActivityLog([]);
+        streamHook.startThinking(runId);
         return;
       }
 
@@ -444,14 +411,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         if (!isGeneratingRef.current) setIsGenerating(true);
         if (!activeRunIdRef.current) activeRunIdRef.current = runId;
 
-        captureThinkingDuration();
+        streamHook.captureThinkingDuration();
 
         const delta = extractStreamDelta(cp);
         if (delta) {
           run.bufferRaw = delta.text;
           run.bufferText = delta.cleaned;
-          scheduleStreamingUpdate(runId, run.bufferText);
-          setProcessingStage('streaming');
+          streamHook.scheduleStreamingUpdate(runId, run.bufferText);
+          streamHook.setProcessingStage('streaming');
         }
         return;
       }
@@ -468,32 +435,32 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         run.bufferText = '';
 
         if (activeRunIdRef.current === runId) activeRunIdRef.current = null;
-        incrementGeneration();
+        recoveryHook.incrementGeneration();
 
         if (isActiveRun) {
           setIsGenerating(false);
-          setProcessingStage(null);
-          setActivityLog([]);
-          setLastEventTimestamp(0);
-          clearStreamBuffer();
+          streamHook.setProcessingStage(null);
+          streamHook.setActivityLog([]);
+          streamHook.setLastEventTimestamp(0);
+          streamHook.clearStreamBuffer();
         }
 
         const finalData = extractFinalMessage(cp);
         const finalMessages = processChatMessages(extractFinalMessages(cp));
 
         if (finalMessages.length > 0) {
-          const merged = mergeFinalMessages(getAllMessages(), finalMessages);
-          const thinkingDuration = getThinkingDuration(runId);
+          const merged = mergeFinalMessages(msgHook.getAllMessages(), finalMessages);
+          const thinkingDuration = streamHook.getThinkingDuration(runId);
           const withDuration = thinkingDuration
             ? patchThinkingDuration(merged, thinkingDuration)
             : merged;
-          applyMessageWindow(withDuration, false);
+          msgHook.applyMessageWindow(withDuration, false);
         } else {
-          triggerRecovery('unrenderable-final');
+          recoveryHook.triggerRecovery('unrenderable-final');
         }
 
-        handleFinalTTS(finalData, isActiveRun);
-        resetThinking();
+        ttsHook.handleFinalTTS(finalData, isActiveRun);
+        streamHook.resetThinking();
         pruneRunRegistry(runsRef.current, activeRunIdRef.current);
         return;
       }
@@ -510,27 +477,27 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         run.bufferText = '';
 
         if (activeRunIdRef.current === runId) activeRunIdRef.current = null;
-        incrementGeneration();
+        recoveryHook.incrementGeneration();
 
         const partialMessagesRaw = extractFinalMessages(cp);
         if (partialMessagesRaw.length > 0) {
           const partialMessages = processChatMessages(partialMessagesRaw);
           if (partialMessages.length > 0) {
-            const merged = mergeFinalMessages(getAllMessages(), partialMessages);
-            applyMessageWindow(merged, false);
+            const merged = mergeFinalMessages(msgHook.getAllMessages(), partialMessages);
+            msgHook.applyMessageWindow(merged, false);
           }
         }
 
         if (isActiveRun) {
           setIsGenerating(false);
-          setProcessingStage(null);
-          setActivityLog([]);
-          setLastEventTimestamp(0);
-          clearStreamBuffer();
-          playCompletionPing();
+          streamHook.setProcessingStage(null);
+          streamHook.setActivityLog([]);
+          streamHook.setLastEventTimestamp(0);
+          streamHook.clearStreamBuffer();
+          ttsHook.playCompletionPing();
         }
 
-        resetThinking();
+        streamHook.resetThinking();
         pruneRunRegistry(runsRef.current, activeRunIdRef.current);
         return;
       }
@@ -547,44 +514,44 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         run.bufferText = '';
 
         if (activeRunIdRef.current === runId) activeRunIdRef.current = null;
-        incrementGeneration();
+        recoveryHook.incrementGeneration();
 
         if (isActiveRun) {
           setIsGenerating(false);
-          setProcessingStage(null);
-          setActivityLog([]);
-          setLastEventTimestamp(0);
-          clearStreamBuffer();
+          streamHook.setProcessingStage(null);
+          streamHook.setActivityLog([]);
+          streamHook.setLastEventTimestamp(0);
+          streamHook.clearStreamBuffer();
         }
 
         if (isActiveRun) {
-          triggerRecovery('unrenderable-final');
+          recoveryHook.triggerRecovery('unrenderable-final');
         }
 
-        resetThinking();
+        streamHook.resetThinking();
         pruneRunRegistry(runsRef.current, activeRunIdRef.current);
       }
     });
   }, [
-    getAllMessages,
-    applyMessageWindow,
-    setProcessingStage,
-    setLastEventTimestamp,
-    setActivityLog,
-    addActivityEntry,
-    completeActivityEntry,
-    startThinking,
-    captureThinkingDuration,
-    scheduleStreamingUpdate,
-    clearStreamBuffer,
-    getThinkingDuration,
-    resetThinking,
-    triggerRecovery,
-    incrementGeneration,
-    getGeneration,
-    playCompletionPing,
-    resetPlayedSounds,
-    handleFinalTTS,
+    msgHook.getAllMessages,
+    msgHook.applyMessageWindow,
+    streamHook.setProcessingStage,
+    streamHook.setLastEventTimestamp,
+    streamHook.setActivityLog,
+    streamHook.addActivityEntry,
+    streamHook.completeActivityEntry,
+    streamHook.startThinking,
+    streamHook.captureThinkingDuration,
+    streamHook.scheduleStreamingUpdate,
+    streamHook.clearStreamBuffer,
+    streamHook.getThinkingDuration,
+    streamHook.resetThinking,
+    recoveryHook.triggerRecovery,
+    recoveryHook.incrementGeneration,
+    recoveryHook.getGeneration,
+    ttsHook.playCompletionPing,
+    ttsHook.resetPlayedSounds,
+    ttsHook.handleFinalTTS,
     subscribe,
     rpc,
   ]);
@@ -595,14 +562,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
     const { msg: userMsg, tempId } = buildUserMessage({ text, images, uploadPayload });
 
-    incrementGeneration();
+    recoveryHook.incrementGeneration();
 
     // Optimistic insert (functional updater to avoid read-then-write race)
     msgHook.setAllMessages(prev => [...prev, userMsg]);
     msgHook.setMessages((prev: ChatMsg[]) => [...prev, userMsg]);
     setIsGenerating(true);
     streamHook.setStream((prev: ChatStreamState) => ({ ...prev, html: '', runId: undefined }));
-    setProcessingStage('thinking');
+    streamHook.setProcessingStage('thinking');
 
     const idempotencyKey = crypto.randomUUID ? crypto.randomUUID() : 'ik-' + Date.now();
     try {
@@ -620,7 +587,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         run.status = ack.status;
         run.finalized = false;
         activeRunIdRef.current = ack.runId;
-        startThinking(ack.runId);
+        streamHook.startThinking(ack.runId);
       }
 
       // Confirm the message (functional updater to avoid race after await)
@@ -645,7 +612,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       msgHook.setMessages((prev: ChatMsg[]) => [...prev, errMsgBubble]);
       setIsGenerating(false);
     }
-  }, [rpc, msgHook, streamHook, ttsHook, incrementGeneration, setProcessingStage, startThinking]);
+  }, [rpc, msgHook, streamHook, ttsHook, recoveryHook]);
 
   // ─── Abort / Reset ────────────────────────────────────────────────────────
   const handleAbort = useCallback(async () => {
@@ -697,13 +664,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     isGenerating,
     stream: streamHook.stream,
     processingStage: streamHook.processingStage,
-    lastEventTimestamp: lastEventTimestamp,
+    lastEventTimestamp: streamHook.lastEventTimestamp,
     activityLog: streamHook.activityLog,
     currentToolDescription: streamHook.currentToolDescription,
     handleSend,
     handleAbort,
     handleReset,
-    loadHistory: loadHistory,
+    loadHistory: msgHook.loadHistory,
     loadMore: msgHook.loadMore,
     hasMore: msgHook.hasMore,
     showResetConfirm,
@@ -714,13 +681,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     isGenerating,
     streamHook.stream,
     streamHook.processingStage,
-    lastEventTimestamp,
+    streamHook.lastEventTimestamp,
     streamHook.activityLog,
     streamHook.currentToolDescription,
     handleSend,
     handleAbort,
     handleReset,
-    loadHistory,
+    msgHook.loadHistory,
     msgHook.loadMore,
     msgHook.hasMore,
     showResetConfirm,

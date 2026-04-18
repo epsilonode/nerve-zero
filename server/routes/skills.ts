@@ -1,7 +1,7 @@
 /**
  * Skills API Routes
  *
- * GET /api/skills — List all skills via `openclaw skills list --json`
+ * GET /api/skills — List all skills via `ZeroClaw skills list --json`
  */
 
 import { Hono } from 'hono';
@@ -10,14 +10,14 @@ import os from 'node:os';
 import { execFile, type ExecFileException } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { rateLimitGeneral } from '../middleware/rate-limit.js';
-import { resolveOpenclawBin } from '../lib/openclaw-bin.js';
+import { resolveZeroclawBin } from '../lib/zeroclaw-bin.js';
 import { InvalidAgentIdError, resolveAgentWorkspace } from '../lib/agent-workspace.js';
 import { config } from '../lib/config.js';
 
 const app = new Hono();
 
 const SKILLS_TIMEOUT_MS = 15_000;
-const OPENCLAW_CONFIG_FILENAME = 'openclaw.json';
+const ZeroClaw_CONFIG_FILENAME = 'ZeroClaw.json';
 
 /** Ensure PATH includes the directory of the current Node binary (for #!/usr/bin/env node shims under systemd) */
 const nodeDir = dirname(process.execPath);
@@ -60,7 +60,7 @@ class SkillsRouteError extends Error {
 function extractJsonPayload(stdout: string): unknown {
   const trimmed = stdout.trim();
   if (!trimmed) {
-    throw new SkillsRouteError('openclaw skills list returned empty output');
+    throw new SkillsRouteError('ZeroClaw skills list returned empty output');
   }
 
   // Normal case: pure JSON output.
@@ -70,7 +70,7 @@ function extractJsonPayload(stdout: string): unknown {
     // Fall through to prelude-tolerant parsing.
   }
 
-  // OpenClaw can print warnings before JSON.
+  // ZeroClaw can print warnings before JSON.
   // Try parsing from each possible JSON structure start ({ or [).
   const startIndices: number[] = [];
   for (let i = 0; i < trimmed.length; i++) {
@@ -89,7 +89,7 @@ function extractJsonPayload(stdout: string): unknown {
     }
   }
 
-  throw new SkillsRouteError('Failed to parse openclaw skills output as JSON');
+  throw new SkillsRouteError('Failed to parse ZeroClaw skills output as JSON');
 }
 
 function parseSkillsOutput(stdout: string): RawSkill[] {
@@ -103,12 +103,12 @@ function parseSkillsOutput(stdout: string): RawSkill[] {
     return (parsed as SkillsOutput).skills as RawSkill[];
   }
 
-  throw new SkillsRouteError('Invalid openclaw skills payload: missing skills array');
+  throw new SkillsRouteError('Invalid ZeroClaw skills payload: missing skills array');
 }
 
 function formatExecError(err: ExecFileException, stderr: string, commandLabel: string): string {
   if (err.code === 'ENOENT') {
-    return 'openclaw CLI not found in PATH';
+    return 'ZeroClaw CLI not found in PATH';
   }
 
   if (err.killed && err.signal === 'SIGTERM') {
@@ -123,20 +123,20 @@ function formatExecError(err: ExecFileException, stderr: string, commandLabel: s
   return `${commandLabel} failed: ${err.message}`;
 }
 
-function execOpenclawCommand(
+function execZeroClawCommand(
   args: string[],
   opts: { env?: NodeJS.ProcessEnv; cwd?: string } = {},
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const openclawBin = resolveOpenclawBin();
-    execFile(openclawBin, args, {
+    const ZeroClawBin = resolveZeroclawBin();
+    execFile(ZeroClawBin, args, {
       timeout: SKILLS_TIMEOUT_MS,
       maxBuffer: 2 * 1024 * 1024,
       env: opts.env ?? enrichedEnv,
       cwd: opts.cwd,
     }, (err, stdout, stderr) => {
       if (err) {
-        const label = `openclaw ${args.join(' ')}`;
+        const label = `ZeroClaw ${args.join(' ')}`;
         return reject(new SkillsRouteError(formatExecError(err, stderr, label)));
       }
       return resolve({ stdout, stderr });
@@ -144,23 +144,23 @@ function execOpenclawCommand(
   });
 }
 
-function getActiveOpenclawConfigPath(): string {
-  const envPath = process.env.OPENCLAW_CONFIG_PATH?.trim();
+function getActiveZeroClawConfigPath(): string {
+  const envPath = process.env.ZeroClaw_CONFIG_PATH?.trim();
   if (envPath) {
     return envPath;
   }
-  return join(config.home, '.openclaw', OPENCLAW_CONFIG_FILENAME);
+  return join(config.home, '.ZeroClaw', ZeroClaw_CONFIG_FILENAME);
 }
 
-async function createScopedOpenclawEnv(workspaceRoot: string): Promise<{
+async function createScopedZeroClawEnv(workspaceRoot: string): Promise<{
   env: NodeJS.ProcessEnv;
   cleanup: () => Promise<void>;
 }> {
   const tempDir = await fs.mkdtemp(join(os.tmpdir(), 'nerve-skills-'));
-  const tempConfigPath = join(tempDir, OPENCLAW_CONFIG_FILENAME);
+  const tempConfigPath = join(tempDir, ZeroClaw_CONFIG_FILENAME);
 
   try {
-    await fs.copyFile(getActiveOpenclawConfigPath(), tempConfigPath);
+    await fs.copyFile(getActiveZeroClawConfigPath(), tempConfigPath);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       await fs.writeFile(tempConfigPath, '{}\n', 'utf-8');
@@ -172,11 +172,11 @@ async function createScopedOpenclawEnv(workspaceRoot: string): Promise<{
 
   const scopedEnv = {
     ...enrichedEnv,
-    OPENCLAW_CONFIG_PATH: tempConfigPath,
+    ZeroClaw_CONFIG_PATH: tempConfigPath,
   };
 
   try {
-    await execOpenclawCommand(['config', 'set', 'agents.defaults.workspace', workspaceRoot], {
+    await execZeroClawCommand(['config', 'set', 'agents.defaults.workspace', workspaceRoot], {
       env: scopedEnv,
     });
   } catch (err) {
@@ -201,12 +201,12 @@ async function resolveWorkspaceCwd(workspaceRoot: string): Promise<string | unde
   }
 }
 
-async function execOpenclawSkills(agentId?: string): Promise<RawSkill[]> {
+async function execZeroClawSkills(agentId?: string): Promise<RawSkill[]> {
   const workspace = resolveAgentWorkspace(agentId);
-  const scoped = await createScopedOpenclawEnv(workspace.workspaceRoot);
+  const scoped = await createScopedZeroClawEnv(workspace.workspaceRoot);
 
   try {
-    const { stdout, stderr } = await execOpenclawCommand(['skills', 'list', '--json'], {
+    const { stdout, stderr } = await execZeroClawCommand(['skills', 'list', '--json'], {
       env: scoped.env,
       cwd: await resolveWorkspaceCwd(workspace.workspaceRoot),
     });
@@ -219,7 +219,7 @@ async function execOpenclawSkills(agentId?: string): Promise<RawSkill[]> {
 
 app.get('/api/skills', rateLimitGeneral, async (c) => {
   try {
-    const skills = await execOpenclawSkills(c.req.query('agentId'));
+    const skills = await execZeroClawSkills(c.req.query('agentId'));
     return c.json({ ok: true, skills });
   } catch (err) {
     if (err instanceof InvalidAgentIdError) {

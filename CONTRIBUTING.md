@@ -17,46 +17,51 @@ Thanks for wanting to help! This guide covers everything you need to start contr
 
 ### Prerequisites
 
-- **Node.js ≥ 22** — check with `node --version`
-- **npm** (bundled with Node)
-- A running [OpenClaw](https://github.com/openclaw/openclaw) gateway
+- **Bun 1.0+** — check with `bun --version`
+- A running [ZeroClaw](https://github.com/ZeroClaw/ZeroClaw) gateway
 
 ### Steps
 
 1. **Fork and clone** the repository:
    ```bash
-   git clone https://github.com/<your-username>/openclaw-nerve.git
-   cd openclaw-nerve
+   git clone https://github.com/<your-username>/ZeroClaw-nerve.git
+   cd ZeroClaw-nerve
    ```
 
 2. **Install dependencies:**
    ```bash
-   npm install
+   bun install
    ```
 
 3. **Configure environment:**
    ```bash
-   npm run setup
+   bun run setup
    ```
    The interactive wizard auto-detects your gateway token and writes `.env`. Alternatively, copy `.env.example` to `.env` and fill in values manually.
 
 4. **Start development servers** (two terminals):
    ```bash
    # Terminal 1 — Vite frontend with HMR
-   npm run dev
+   bun run dev
 
    # Terminal 2 — Backend with file watching on a separate port
-   PORT=3081 npm run dev:server
+   PORT=3081 bun run dev:server
    ```
 
 5. Open **http://localhost:3080**. In this split setup, Vite proxies API and WebSocket traffic to the backend on `:3081`.
 
-   `npm run dev:server` does not default to `:3081` on its own. Without `PORT=3081`, the backend uses its normal default of `:3080`.
+   `bun run dev:server` does not default to `:3081` on its own. Without `PORT=3081`, the backend uses its normal default of `:3080`.
+
+5. **Start the app normally:**
+   ```bash
+   bun start
+   ```
+   This is the conventional local boot path. It builds `dist/` automatically if needed, then starts the Bun server.
 
 ## Project Structure
 
 ```
-openclaw-nerve/
+ZeroClaw-nerve/
 ├── src/                        # Frontend (React + TypeScript)
 │   ├── features/               # Product surfaces and feature-local helpers
 │   │   ├── activity/           # Agent log and event log panels
@@ -145,9 +150,9 @@ openclaw-nerve/
 Tests use [Vitest](https://vitest.dev) with jsdom for React component testing and [Testing Library](https://testing-library.com/docs/react-testing-library/intro) for assertions.
 
 ```bash
-npm test                  # Watch mode (re-runs on save)
-npm test -- --run         # Single run (CI-friendly)
-npm run test:coverage     # With V8 coverage report (text + HTML + lcov)
+bun test                  # Watch mode (re-runs on save)
+bun test -- --run         # Single run (CI-friendly)
+bun run test:coverage     # With V8 coverage report (text + HTML + lcov)
 ```
 
 ### Guidelines
@@ -162,7 +167,7 @@ npm run test:coverage     # With V8 coverage report (text + HTML + lcov)
 ESLint 9 with flat config. TypeScript-ESLint + React Hooks + React Refresh rules.
 
 ```bash
-npm run lint
+bun run lint
 ```
 
 Key rules:
@@ -203,10 +208,10 @@ test(voice): add wake-word persistence tests
 4. **Keep PRs focused** — one feature or fix per PR.
 5. **Ensure all checks pass** before requesting review:
    ```bash
-   npm run lint
-   npm run build
-   npm run build:server
-   npm test -- --run
+   bun run lint
+   bun run build
+   bun run build:server
+   bun test -- --run
    ```
 6. **Fill out the PR template** — describe what, why, and how.
 7. **Include tests** for new features. Bug fixes should include a regression test when feasible.

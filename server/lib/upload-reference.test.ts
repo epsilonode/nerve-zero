@@ -16,7 +16,7 @@ const tempDirs = new Set<string>();
 async function makeHomeWorkspace(): Promise<{ homeDir: string; workspaceRoot: string }> {
   const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'nerve-upload-reference-lib-home-'));
   tempDirs.add(homeDir);
-  const workspaceRoot = path.join(homeDir, '.openclaw', 'workspace');
+  const workspaceRoot = path.join(homeDir, '.ZeroClaw', 'workspace');
   await fs.mkdir(workspaceRoot, { recursive: true });
   process.env.HOME = homeDir;
   delete process.env.FILE_BROWSER_ROOT;
