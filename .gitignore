@@ -55,3 +55,4 @@ node_modules
 # Local dev tool configs
 .claude/
 dep/
+docs/

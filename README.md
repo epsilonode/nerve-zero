@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/nerve-logo-animated.svg" alt="Nerve" width="200" />
+<img src="nerve-logo-animated.svg" alt="Nerve" width="200" />
 
 # Nerve
 
@@ -116,9 +116,9 @@ curl -fsSL https://raw.githubusercontent.com/epsilonode/nerve-zero/master/instal
 
 ### Pick your setup
 
-- **[Local](docs/DEPLOYMENT-A.md)** — Run Nerve and Gateway on one machine. *Recommended default setup for reliability and simplicity.*
-- **[Hybrid](docs/DEPLOYMENT-B.md)** — Keep Nerve local, run Gateway in the cloud
-- **[Cloud](docs/DEPLOYMENT-C.md)** — Run Nerve and Gateway in the cloud
+- **[Local](https://github.com/daggerhashimoto/openclaw-nerve/blob/master/docs/DEPLOYMENT-A.md)** — Run Nerve and Gateway on one machine. *Recommended default setup for reliability and simplicity.*
+- **[Hybrid](https://github.com/daggerhashimoto/openclaw-nerve/blob/master/docs/DEPLOYMENT-B.md)** — Keep Nerve local, run Gateway in the cloud
+- **[Cloud](https://github.com/daggerhashimoto/openclaw-nerve/blob/master/docs/DEPLOYMENT-C.md)** — Run Nerve and Gateway in the cloud
 
 <details><summary><strong>Manual install</strong></summary>
 
@@ -204,28 +204,17 @@ Nerve binds to `127.0.0.1` by default, so it stays local unless you choose to ex
 
 When you bind it to the network (`HOST=0.0.0.0`), built-in password authentication protects the UI and its endpoints. Sessions use signed cookies, passwords are stored as hashes, WebSocket upgrades are authenticated, and trusted connections can use server-side gateway token injection.
 
-For the full threat model and hardening details, see **[docs/SECURITY.md](docs/SECURITY.md)**.
+For the full threat model and hardening details, see **[docs/SECURITY.md](https://github.com/daggerhashimoto/openclaw-nerve/blob/master/docs/SECURITY.md)**.
 
 ## Documentation
 
-- **[Architecture](docs/ARCHITECTURE.md)** — codebase structure and system design
-- **[Configuration](docs/CONFIGURATION.md)** — `.env` variables and setup behavior
-- **[Deployment Guides](docs/README.md)** — local, hybrid, and cloud setups
-- **[Agent Markers](docs/AGENT-MARKERS.md)** — TTS, charts, kanban markers, and rich UI output
-- **[Troubleshooting](docs/TROUBLESHOOTING.md)** — common issues and fixes
-- **[Tailscale Guide](docs/TAILSCALE.md)** — private remote access via tailnet IP or Tailscale Serve
-- **[Contributing](CONTRIBUTING.md)** — development workflow and pull requests
-- **[Changelog](CHANGELOG.md)** — release notes and shipped changes
+Documentation is maintained by the upstream project. See the [openclaw-nerve docs](https://github.com/daggerhashimoto/openclaw-nerve/tree/master/docs) for full reference material including architecture, configuration, deployment guides, troubleshooting, and more.
 
 ## Community
 
-If this is the kind of interface you want around your ZeroClaw setup, give the repo a star, contribute and keep an eye on it.
+If this is the kind of interface you want around your ZeroClaw setup, give the repo a star and keep an eye on it.
 
 Join the **[Nerve Discord](https://discord.gg/Sh9ZGtctva)** to get help, discuss, share your setup, and follow development.
-
-### People building Nerve
-
-[![Contributors](https://contrib.rocks/image?repo=epsilonode/nerve-zero)](https://github.com/epsilonode/nerve-zero/graphs/contributors)
 
 ## License
 
