@@ -118,6 +118,11 @@ export function FileTreeNode({
     if (event.pointerType !== 'touch' || isRenaming || !onTouchLongPress) return;
     activeTouchPointerIdRef.current = event.pointerId;
     touchStartRef.current = { x: event.clientX, y: event.clientY };
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Pointer capture is unavailable in some test environments.
+    }
     longPressTimerRef.current = window.setTimeout(() => {
       longPressTriggeredRef.current = true;
       longPressTimerRef.current = null;
